@@ -1,0 +1,14 @@
+name = "egeszseg-dashboard-api"
+main = "src/index.js"
+compatibility_date = "2024-01-01"
+
+# Nem-titkos azonosítók (a database ID önmagában nem ad hozzáférést,
+# csak a NOTION_TOKEN-nel együtt jelent bármit).
+[vars]
+DB_MERESEK = "4d695207ed7a44fc8aa13d448c698b41"
+DB_AKTIVITAS = "1b187bd8d6e94e44979c7ce1e8bbc965"
+DB_ETKEZESEK = "92cc59f37816407fae6da0a49651889a"
+DB_CHECKLIST = "ce6cc97411f347adbfdbe2cd0a9ba080"
+
+# A NOTION_TOKEN és APP_TOKEN NEM ide kerül — azokat titokként kell
+# beállítani (lásd README): wrangler secret put NOTION_TOKEN

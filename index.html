@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<title>Egészség Dashboard</title>
+<link rel="manifest" href="manifest.json" />
+<meta name="theme-color" content="#1B3A4B" />
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+  :root {
+    --ink: #1B3A4B;
+    --paper: #F6F3EC;
+    --card: #FFFFFF;
+    --sage: #7A9E8E;
+    --gold: #C9A227;
+    --alert: #C1666B;
+    --line: #D8D3C4;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--paper); font-family: 'IBM Plex Sans', sans-serif; color: var(--ink); }
+  #hd-root { max-width: 640px; margin: 0 auto; padding: 20px 16px 60px; }
+  .hd-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 18px; flex-wrap: wrap; }
+  .hd-tab-btn { background: transparent; border: none; border-bottom: 2px solid transparent; padding: 8px 12px; font-size: 13px; font-family: 'IBM Plex Sans', sans-serif; color: var(--ink); opacity: 0.55; cursor: pointer; }
+  .hd-tab-btn.active { border-bottom-color: var(--gold); opacity: 1; font-weight: 600; }
+  .hd-panel { display: none; }
+  .hd-panel.active { display: block; }
+  .hd-card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+  .hd-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; }
+  .hd-stat-label { font-size: 11px; letter-spacing: .05em; text-transform: uppercase; opacity: .6; margin: 0 0 4px; }
+  .hd-stat-value { font-family: 'IBM Plex Mono', monospace; font-size: 22px; font-weight: 600; margin: 0; }
+  .hd-checklist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+  .hd-checklist li { display: flex; align-items: center; gap: 10px; padding: 9px 4px; border-bottom: 1px solid var(--line); font-size: 14px; }
+  .hd-checklist li:last-child { border-bottom: none; }
+  .hd-checklist input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--gold); cursor: pointer; flex-shrink: 0; }
+  .hd-checklist label { flex: 1; cursor: pointer; }
+  .hd-checklist label.done { text-decoration: line-through; opacity: .5; }
+  .hd-add-row { display: flex; gap: 6px; margin-top: 10px; }
+  .hd-add-row input { flex: 1; font-family: 'IBM Plex Mono', monospace; font-size: 13px; padding: 7px 9px; border-radius: 6px; border: 1px solid var(--line); background: var(--paper); color: var(--ink); }
+  .hd-btn { background: var(--ink); color: var(--paper); border: none; border-radius: 6px; padding: 7px 14px; font-size: 13px; font-weight: 600; cursor: pointer; }
+  .hd-btn.ghost { background: transparent; color: var(--alert); border: 1px solid var(--line); padding: 4px 8px; font-weight: 400; font-size: 12px; }
+  .hd-section-title { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; opacity: .6; margin: 18px 0 8px; }
+  .hd-section-title:first-child { margin-top: 0; }
+  .hd-date { font-family: 'IBM Plex Mono', monospace; font-size: 11px; opacity: .55; margin-bottom: 14px; }
+  .hd-meal-card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin-bottom: 8px; }
+  .hd-meal-type { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--sage); font-weight: 600; }
+  .hd-meal-desc { font-size: 14px; margin: 4px 0 6px; }
+  .hd-meal-macros { font-family: 'IBM Plex Mono', monospace; font-size: 12px; opacity: .65; }
+  .hd-glass-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+  .hd-glass { width: 40px; height: 40px; border-radius: 8px; border: 1.5px solid var(--line); background: var(--card); display: flex; align-items: center; justify-content: center; font-family: 'IBM Plex Mono', monospace; font-size: 12px; cursor: pointer; color: var(--ink); opacity: .6; }
+  .hd-glass.filled { background: var(--gold); border-color: var(--gold); opacity: 1; color: var(--ink); font-weight: 600; }
+  .hd-water-summary { font-family: 'IBM Plex Mono', monospace; font-size: 13px; margin-top: 10px; opacity: .75; }
+  .hd-banner { background: #FFF7E0; border: 1px solid var(--gold); border-radius: 8px; padding: 10px 12px; font-size: 12px; margin-bottom: 16px; }
+</style>
+</head>
+<body>
+<div id="hd-root">
+  <div class="hd-date" id="hd-date"></div>
+  <div class="hd-tabs">
+    <button class="hd-tab-btn active" data-tab="vitals">Mérések</button>
+    <button class="hd-tab-btn" data-tab="activity">Mozgás</button>
+    <button class="hd-tab-btn" data-tab="nutrition">Táplálkozás</button>
+    <button class="hd-tab-btn" data-tab="meds">Gyógyszerek &amp; kiegészítők</button>
+  </div>
+
+  <div class="hd-panel active" data-panel="vitals">
+    <div class="hd-grid">
+      <div class="hd-card"><p class="hd-stat-label">Súly</p><p class="hd-stat-value"><span id="hd-vital-weight">—</span> <span style="font-size:12px;opacity:.6">kg</span></p></div>
+      <div class="hd-card"><p class="hd-stat-label">Derékbőség</p><p class="hd-stat-value"><span id="hd-vital-waist">—</span> <span style="font-size:12px;opacity:.6">cm</span></p></div>
+      <div class="hd-card"><p class="hd-stat-label">Vérnyomás</p><p class="hd-stat-value"><span id="hd-vital-bp">—</span></p></div>
+      <div class="hd-card"><p class="hd-stat-label">Pulzus</p><p class="hd-stat-value"><span id="hd-vital-pulse">—</span> <span style="font-size:12px;opacity:.6">/perc</span></p></div>
+    </div>
+    <p style="font-size:12px; opacity:.55; margin-top:12px;">Élő adat a Notion "Mérések" táblából (legutóbbi sor).</p>
+  </div>
+
+  <div class="hd-panel" data-panel="activity">
+    <p class="hd-section-title">Táv aktivitásonként (Strava → Notion)</p>
+    <div style="position: relative; width: 100%; height: 200px;">
+      <canvas id="activityChart"></canvas>
+    </div>
+
+    <p class="hd-section-title">Nordic walking ma</p>
+    <ul class="hd-checklist" id="hd-nw-list"></ul>
+
+    <p class="hd-section-title">Mai gyakorlatok</p>
+    <ul class="hd-checklist" id="hd-ex-list"></ul>
+    <div class="hd-add-row">
+      <input type="text" id="hd-ex-input" placeholder="pl. fekvőtámasz 3x10" />
+      <button class="hd-btn" id="hd-ex-add">Hozzáad</button>
+    </div>
+  </div>
+
+  <div class="hd-panel" data-panel="nutrition">
+    <p class="hd-section-title">Ma megevett étkezések</p>
+    <div id="hd-meals-list"></div>
+
+    <p class="hd-section-title">Napi összesen</p>
+    <div class="hd-grid">
+      <div class="hd-card"><p class="hd-stat-label">Kalória</p><p class="hd-stat-value"><span id="hd-nutri-cal">0</span></p></div>
+      <div class="hd-card"><p class="hd-stat-label">Fehérje</p><p class="hd-stat-value"><span id="hd-nutri-protein">0</span>g</p></div>
+      <div class="hd-card"><p class="hd-stat-label">Szénhidrát</p><p class="hd-stat-value"><span id="hd-nutri-carbs">0</span>g</p></div>
+      <div class="hd-card"><p class="hd-stat-label">Zsír</p><p class="hd-stat-value"><span id="hd-nutri-fat">0</span>g</p></div>
+    </div>
+
+    <p class="hd-section-title">Víz (250 ml / pohár, cél: 11 pohár ≈ 2750 ml)</p>
+    <div class="hd-glass-row" id="hd-water-row"></div>
+    <p class="hd-water-summary" id="hd-water-summary"></p>
+  </div>
+
+  <div class="hd-panel" data-panel="meds">
+    <p class="hd-section-title">Reggel</p>
+    <ul class="hd-checklist" id="hd-med-morning"></ul>
+    <p class="hd-section-title">Este</p>
+    <ul class="hd-checklist" id="hd-med-evening"></ul>
+    <p class="hd-section-title">Heti</p>
+    <ul class="hd-checklist" id="hd-med-weekly"></ul>
+    <p class="hd-section-title">Kiegészítők</p>
+    <ul class="hd-checklist" id="hd-med-supp"></ul>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
