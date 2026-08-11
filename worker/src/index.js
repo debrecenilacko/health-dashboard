@@ -181,6 +181,27 @@ async function postChecklistToday(env, body) {
   return checklistPageToJson(row);
 }
 
+async function postVitalsLog(env, body) {
+  const d = todayISO();
+  const properties = {
+    Name: { title: [{ text: { content: d } }] },
+    'Dátum': { date: { start: d } },
+    'Forrás': { select: { name: 'Automata (Renpho)' } }
+  };
+  if (typeof body.weight === 'number') properties['Súly (kg)'] = { number: body.weight };
+  if (typeof body.bodyFat === 'number') properties['Testzsír (%)'] = { number: body.bodyFat };
+  if (typeof body.bmi === 'number') properties['BMI'] = { number: body.bmi };
+
+  const row = await notion(env, '/pages', {
+    method: 'POST',
+    body: JSON.stringify({
+      parent: { database_id: env.DB_MERESEK },
+      properties
+    })
+  });
+  return { ok: true, id: row.id };
+}
+
 // ---- Entry point ---------------------------------------------------------
 
 export default {
@@ -205,6 +226,10 @@ export default {
       if (url.pathname === '/api/checklist/today' && request.method === 'POST') {
         const body = await request.json();
         return json(await postChecklistToday(env, body));
+      }
+      if (url.pathname === '/api/vitals/log' && request.method === 'POST') {
+        const body = await request.json();
+        return json(await postVitalsLog(env, body));
       }
       return json({ error: 'not found' }, 404);
     } catch (err) {
