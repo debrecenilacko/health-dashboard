@@ -77,8 +77,69 @@ async function getVitalsToday(env) {
     sys: num(p['Sys (Hgmm)']),
     dia: num(p['Dia (Hgmm)']),
     pulse: num(p['Pulzus (/perc)']),
-    glucose: num(p['Vércukor (mmol/l)'])
+    glucose: num(p['Vércukor (mmol/l)']),
+    sleepHours: num(p['Alvás összesen (óra)']),
+    sleepDeepMin: num(p['Mély alvás (perc)']),
+    sleepRemMin: num(p['REM alvás (perc)']),
+    sleepScore: num(p['Alvás pontszám']),
+    sleepRestingPulse: num(p['Nyugalmi pulzus alvás közben (/perc)']),
+    steps: num(p['Lépésszám']),
+    activeEnergy: num(p['Aktív energia (kcal)']),
+    hrv: num(p['HRV (ms)'])
   };
+}
+
+// ---- Strava activity ingest (via IFTTT Webhooks) --------------------------
+
+const STRAVA_TYPE_MAP = {
+  Run: 'Futás',
+  Ride: 'Kerékpár',
+  Swim: 'Úszás',
+  Walk: 'Séta',
+  Hike: 'Séta'
+};
+
+async function findActivityByStravaId(env, stravaId) {
+  const data = await notion(env, `/databases/${env.DB_AKTIVITAS}/query`, {
+    method: 'POST',
+    body: JSON.stringify({ filter: { property: 'Strava ID', rich_text: { equals: String(stravaId) } }, page_size: 1 })
+  });
+  return data.results[0] || null;
+}
+
+async function postActivityStrava(env, body) {
+  // Expected body fields (from the IFTTT Strava trigger ingredients):
+  // link_to_activity, name, activity_type, distance (meters), elapsed_time_in_seconds, created_at
+  // IFTTT's Strava trigger has no bare activity ID or calories field, so the ID
+  // is pulled out of the activity URL and calories is left for manual/Strava-MCP enrichment.
+  const idMatch = body.link_to_activity ? String(body.link_to_activity).match(/activities\/(\d+)/) : null;
+  const stravaId = body.strava_id ? String(body.strava_id) : (idMatch ? idMatch[1] : '');
+  if (stravaId) {
+    const existing = await findActivityByStravaId(env, stravaId);
+    if (existing) return { skipped: true, reason: 'duplicate', id: existing.id };
+  }
+
+  const km = body.distance != null ? Math.round((Number(body.distance) / 1000) * 100) / 100 : null;
+  const minutes = body.elapsed_time_in_seconds != null ? Math.round(Number(body.elapsed_time_in_seconds) / 60) : null;
+  const d = (body.created_at ? String(body.created_at) : new Date().toISOString()).slice(0, 10);
+  const typ = STRAVA_TYPE_MAP[body.activity_type] || 'Egyéb';
+
+  const properties = {
+    Name: { title: [{ text: { content: body.name || `Strava ${typ}` } }] },
+    'Dátum': { date: { start: d } },
+    'Típus': { select: { name: typ } },
+    'Forrás': { select: { name: 'Automata (Strava)' } }
+  };
+  if (km != null) properties['Táv (km)'] = { number: km };
+  if (minutes != null) properties['Idő (perc)'] = { number: minutes };
+  if (body.calories != null) properties['Kalória'] = { number: Number(body.calories) };
+  if (stravaId) properties['Strava ID'] = { rich_text: [{ text: { content: stravaId } }] };
+
+  const row = await notion(env, '/pages', {
+    method: 'POST',
+    body: JSON.stringify({ parent: { database_id: env.DB_AKTIVITAS }, properties })
+  });
+  return { skipped: false, id: row.id };
 }
 
 async function getMealsToday(env) {
@@ -150,6 +211,14 @@ async function getChecklistToday(env) {
   return checklistPageToJson(row);
 }
 
+async function getChecklistRecent(env, days) {
+  const data = await notion(env, `/databases/${env.DB_CHECKLIST}/query`, {
+    method: 'POST',
+    body: JSON.stringify({ sorts: [{ property: 'Dátum', direction: 'descending' }], page_size: Math.min(days || 30, 100) })
+  });
+  return data.results.map(checklistPageToJson);
+}
+
 async function postChecklistToday(env, body) {
   let row = await findChecklistPageToday(env);
   const properties = {};
@@ -181,6 +250,27 @@ async function postChecklistToday(env, body) {
   return checklistPageToJson(row);
 }
 
+async function postVitalsLog(env, body) {
+  const d = todayISO();
+  const properties = {
+    Name: { title: [{ text: { content: d } }] },
+    'Dátum': { date: { start: d } },
+    'Forrás': { select: { name: 'Automata (Renpho)' } }
+  };
+  if (typeof body.weight === 'number') properties['Súly (kg)'] = { number: body.weight };
+  if (typeof body.bodyFat === 'number') properties['Testzsír (%)'] = { number: body.bodyFat };
+  if (typeof body.bmi === 'number') properties['BMI'] = { number: body.bmi };
+
+  const row = await notion(env, '/pages', {
+    method: 'POST',
+    body: JSON.stringify({
+      parent: { database_id: env.DB_MERESEK },
+      properties
+    })
+  });
+  return { ok: true, id: row.id };
+}
+
 // ---- Entry point ---------------------------------------------------------
 
 export default {
@@ -199,12 +289,24 @@ export default {
       if (url.pathname === '/api/activity/recent' && request.method === 'GET') {
         return json(await getActivityRecent(env));
       }
+      if (url.pathname === '/api/activity/strava-log' && request.method === 'POST') {
+        const body = await request.json();
+        return json(await postActivityStrava(env, body));
+      }
       if (url.pathname === '/api/checklist/today' && request.method === 'GET') {
         return json(await getChecklistToday(env));
+      }
+      if (url.pathname === '/api/checklist/recent' && request.method === 'GET') {
+        const days = Number(url.searchParams.get('days')) || 30;
+        return json(await getChecklistRecent(env, days));
       }
       if (url.pathname === '/api/checklist/today' && request.method === 'POST') {
         const body = await request.json();
         return json(await postChecklistToday(env, body));
+      }
+      if (url.pathname === '/api/vitals/log' && request.method === 'POST') {
+        const body = await request.json();
+        return json(await postVitalsLog(env, body));
       }
       return json({ error: 'not found' }, 404);
     } catch (err) {
