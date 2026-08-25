@@ -89,6 +89,22 @@ async function getVitalsToday(env) {
   };
 }
 
+async function getVitalsRecent(env, limit) {
+  const data = await notion(env, `/databases/${env.DB_MERESEK}/query`, {
+    method: 'POST',
+    body: JSON.stringify({ sorts: [{ property: 'Dátum', direction: 'descending' }], page_size: Math.min(limit || 30, 100) })
+  });
+  return data.results.map((row) => {
+    const p = row.properties;
+    return {
+      date: date(p['Dátum']),
+      weight: num(p['Súly (kg)']),
+      bodyFat: num(p['Testzsír (%)']),
+      bmi: num(p['BMI'])
+    };
+  }).reverse();
+}
+
 // ---- Strava activity ingest (via IFTTT Webhooks) --------------------------
 
 const STRAVA_TYPE_MAP = {
@@ -301,6 +317,10 @@ export default {
     try {
       if (url.pathname === '/api/vitals/today' && request.method === 'GET') {
         return json(await getVitalsToday(env));
+      }
+      if (url.pathname === '/api/vitals/recent' && request.method === 'GET') {
+        const limit = Number(url.searchParams.get('limit')) || 30;
+        return json(await getVitalsRecent(env, limit));
       }
       if (url.pathname === '/api/meals/today' && request.method === 'GET') {
         return json(await getMealsToday(env));
