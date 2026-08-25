@@ -178,6 +178,25 @@ async function getActivityRecent(env) {
   });
 }
 
+async function getLaborRecent(env, limit) {
+  const data = await notion(env, `/databases/${env.DB_LABOR}/query`, {
+    method: 'POST',
+    body: JSON.stringify({ sorts: [{ property: 'Dátum', direction: 'descending' }], page_size: Math.min(limit || 30, 100) })
+  });
+  return data.results.map((row) => {
+    const p = row.properties;
+    const out = { date: date(p['Dátum']), source: text(p['Forrás intézmény']) };
+    // Include every numeric marker present on the page so the frontend can plot any of them
+    // without the Worker needing to know every lab field name in advance.
+    Object.keys(p).forEach((key) => {
+      if (p[key] && p[key].type === 'number' && p[key].number != null) {
+        out[key] = p[key].number;
+      }
+    });
+    return out;
+  }).reverse();
+}
+
 async function findChecklistPageToday(env) {
   const d = todayISO();
   const data = await notion(env, `/databases/${env.DB_CHECKLIST}/query`, {
@@ -292,6 +311,10 @@ export default {
       if (url.pathname === '/api/activity/strava-log' && request.method === 'POST') {
         const body = await request.json();
         return json(await postActivityStrava(env, body));
+      }
+      if (url.pathname === '/api/labor/recent' && request.method === 'GET') {
+        const limit = Number(url.searchParams.get('limit')) || 30;
+        return json(await getLaborRecent(env, limit));
       }
       if (url.pathname === '/api/checklist/today' && request.method === 'GET') {
         return json(await getChecklistToday(env));
