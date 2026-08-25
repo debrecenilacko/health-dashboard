@@ -97,7 +97,10 @@ async function getVitalsRecent(env, limit) {
   return data.results.map((row) => {
     const p = row.properties;
     return {
+      id: row.id,
+      created: row.created_time,
       date: date(p['Dátum']),
+      source: select(p['Forrás']),
       weight: num(p['Súly (kg)']),
       bodyFat: num(p['Testzsír (%)']),
       bmi: num(p['BMI'])
@@ -285,24 +288,45 @@ async function postChecklistToday(env, body) {
   return checklistPageToJson(row);
 }
 
-async function postVitalsLog(env, body) {
+async function findVitalsPageToday(env) {
   const d = todayISO();
-  const properties = {
-    Name: { title: [{ text: { content: d } }] },
-    'Dátum': { date: { start: d } },
-    'Forrás': { select: { name: 'Automata (Renpho)' } }
-  };
+  const data = await notion(env, `/databases/${env.DB_MERESEK}/query`, {
+    method: 'POST',
+    body: JSON.stringify({ filter: { property: 'Dátum', date: { equals: d } }, sorts: [{ property: 'Dátum', direction: 'descending' }] })
+  });
+  return data.results[0] || null;
+}
+
+async function postVitalsLog(env, body) {
+  const properties = {};
   if (typeof body.weight === 'number') properties['Súly (kg)'] = { number: body.weight };
   if (typeof body.bodyFat === 'number') properties['Testzsír (%)'] = { number: body.bodyFat };
   if (typeof body.bmi === 'number') properties['BMI'] = { number: body.bmi };
 
-  const row = await notion(env, '/pages', {
-    method: 'POST',
-    body: JSON.stringify({
-      parent: { database_id: env.DB_MERESEK },
-      properties
-    })
-  });
+  // The Renpho sync can fire several times for one weigh-in (partial then
+  // corrected readings), so merge same-day writes onto one page instead of
+  // creating a new one every time.
+  let row = await findVitalsPageToday(env);
+  if (row) {
+    row = await notion(env, `/pages/${row.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ properties })
+    });
+  } else {
+    const d = todayISO();
+    row = await notion(env, '/pages', {
+      method: 'POST',
+      body: JSON.stringify({
+        parent: { database_id: env.DB_MERESEK },
+        properties: {
+          Name: { title: [{ text: { content: d } }] },
+          'Dátum': { date: { start: d } },
+          'Forrás': { select: { name: 'Automata (Renpho)' } },
+          ...properties
+        }
+      })
+    });
+  }
   return { ok: true, id: row.id };
 }
 
