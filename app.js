@@ -112,6 +112,51 @@ async function api(path, options = {}) {
   return res.json();
 }
 
+// Same modal pattern as showSettingsModal, for the bariatric-surgery dates.
+function showSurgeryModal(plan) {
+  const overlay = document.getElementById('hd-surgery-overlay');
+  const consultInput = document.getElementById('hd-surgery-consult');
+  const opInput = document.getElementById('hd-surgery-op');
+  const errorEl = document.getElementById('hd-surgery-error');
+  const saveBtn = document.getElementById('hd-surgery-save');
+  const cancelBtn = document.getElementById('hd-surgery-cancel');
+
+  consultInput.value = (plan && plan.consultationDate) || '';
+  opInput.value = (plan && plan.estimatedSurgeryDate) || '';
+  errorEl.textContent = '';
+  overlay.style.display = 'flex';
+
+  return new Promise((resolve) => {
+    function cleanup() {
+      overlay.style.display = 'none';
+      saveBtn.removeEventListener('click', onSave);
+      cancelBtn.removeEventListener('click', onCancel);
+    }
+    async function onSave() {
+      if (!consultInput.value) {
+        errorEl.textContent = 'A konzultáció dátuma kötelező.';
+        return;
+      }
+      try {
+        const saved = await api('/api/surgery-plan', {
+          method: 'POST',
+          body: JSON.stringify({ consultationDate: consultInput.value, estimatedSurgeryDate: opInput.value || null })
+        });
+        cleanup();
+        resolve(saved);
+      } catch (err) {
+        errorEl.textContent = 'Nem sikerült menteni: ' + err.message;
+      }
+    }
+    function onCancel() {
+      cleanup();
+      resolve(null);
+    }
+    saveBtn.addEventListener('click', onSave);
+    cancelBtn.addEventListener('click', onCancel);
+  });
+}
+
 (function () {
   const todayKey = new Date().toISOString().slice(0, 10);
   document.getElementById('hd-date').textContent = todayKey;
@@ -124,21 +169,40 @@ async function api(path, options = {}) {
     if (saved) location.reload();
   });
 
+  document.getElementById('hd-surgery-btn').addEventListener('click', async () => {
+    const plan = await api('/api/surgery-plan');
+    const saved = await showSurgeryModal(plan);
+    if (saved) location.reload();
+  });
+
+  // Top tabs (desktop) and the bottom nav (mobile, CSS-toggled) both use
+  // .hd-tab-btn with the same data-tab values — keep both sets in sync by
+  // active-class rather than just the one element clicked, so a resize
+  // between the two layouts never leaves a stale highlight.
   root.querySelectorAll('.hd-tab-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
-      root.querySelectorAll('.hd-tab-btn').forEach((b) => b.classList.remove('active'));
+      root.querySelectorAll('.hd-tab-btn').forEach((b) => b.classList.toggle('active', b.dataset.tab === btn.dataset.tab));
       root.querySelectorAll('.hd-panel').forEach((p) => p.classList.remove('active'));
-      btn.classList.add('active');
       root.querySelector('.hd-panel[data-panel="' + btn.dataset.tab + '"]').classList.add('active');
     });
+  });
+
+  root.querySelectorAll('.hd-tap-card').forEach((card) => {
+    card.addEventListener('click', () => toggleVitalsCard(card.dataset.vfield, card));
   });
 
   const MED_LABELS = {
     Rosuvastatin: 'morning', Vidonorm: 'morning', Nebilet: 'morning', Rawel: 'morning',
     Merckformin: 'evening', Ozempic: 'weekly',
-    'Kreatin-glicin-taurin': 'supp', 'Just Whey': 'supp', 'Omega-3': 'supp', Multivitamin: 'supp'
+    'Kreatin-glicin-taurin': 'supp', 'Just Whey': 'supp', 'Omega-3': 'supp', Multivitamin: 'supp',
+    'Kurkuma-kivonat': 'supp', NAC: 'supp', TUDCA: 'supp',
+    'Esti 3 órás étkezési határ': 'routine', 'Exercise snack': 'routine'
   };
-  const DISPLAY_NAME = { Nebilet: 'Nebilet (½)', Ozempic: 'Ozempic injekció' };
+  const DISPLAY_NAME = { Nebilet: 'Nebilet (½)', Ozempic: 'Ozempic injekció', 'Esti 3 órás étkezési határ': 'Esti 3 órás étkezési határ (nincs evés lefekvés előtt)' };
+  // Bariatric-surgery-prep supplements that must stop 1-2 weeks before the
+  // operation (per their own Notion property descriptions) — surfaced by the
+  // surgery-plan warning banner, kept in sync with the Worker's identical list.
+  const PRE_OP_STOP_SUPPLEMENTS = ['Kurkuma-kivonat', 'NAC', 'TUDCA'];
 
   function renderChecklistRow(ulEl, fieldNames, checklistState, onToggle) {
     ulEl.innerHTML = '';
@@ -202,6 +266,57 @@ async function api(path, options = {}) {
     document.getElementById('hd-vital-sleep-deep').textContent = vitals.sleepDeepMin ?? '—';
     document.getElementById('hd-vital-sleep-rem').textContent = vitals.sleepRemMin ?? '—';
     document.getElementById('hd-vital-sleep-pulse').textContent = vitals.sleepRestingPulse ?? '—';
+  }
+
+  // Vitals/sleep cards share one chart area per grid (hd-vitals-chart /
+  // hd-sleep-chart) instead of one-per-card like Labor, since these are laid
+  // out as a compact stat grid rather than a list. Only sleepHours gets a
+  // reference line (a general ~8h target) — weight/waist/BP/pulse deliberately
+  // don't get invented target numbers; those should come from an actual
+  // doctor/program, not a guess baked into the app.
+  const VITALS_CHART_META = { sleepHours: { target: 8, targetLabel: 'cél (8 óra)' } };
+  const SLEEP_FIELDS = ['sleepHours', 'sleepDeepMin', 'sleepRemMin', 'sleepRestingPulse'];
+  let vitalsHistory = [];
+  const vitalsChartInstances = {};
+
+  function buildVitalsSeries(field) {
+    if (field === 'bp') {
+      const dates = [];
+      const bySys = {};
+      const byDia = {};
+      vitalsHistory.forEach((row) => {
+        if (row.sys != null || row.dia != null) {
+          if (dates.indexOf(row.date) === -1) dates.push(row.date);
+          if (row.sys != null) bySys[row.date] = row.sys;
+          if (row.dia != null) byDia[row.date] = row.dia;
+        }
+      });
+      return [
+        { label: 'Sys', points: dates.map((d) => ({ date: d, value: bySys[d] ?? null })) },
+        { label: 'Dia', points: dates.map((d) => ({ date: d, value: byDia[d] ?? null })) }
+      ];
+    }
+    const points = vitalsHistory.filter((row) => row[field] != null).map((row) => ({ date: row.date, value: row[field] }));
+    return [{ label: field, points }];
+  }
+
+  function toggleVitalsCard(field, cardEl) {
+    const chartWrap = document.getElementById(SLEEP_FIELDS.indexOf(field) !== -1 ? 'hd-sleep-chart' : 'hd-vitals-chart');
+    const grid = cardEl.parentElement;
+    const prevKey = chartWrap.dataset.activeKey;
+    const wasOpen = chartWrap.style.display !== 'none';
+
+    if (wasOpen && prevKey && prevKey !== field) {
+      toggleTrendChart(chartWrap, vitalsChartInstances, prevKey, [], []);
+    }
+    const closingSameField = wasOpen && prevKey === field;
+
+    const meta = VITALS_CHART_META[field] || {};
+    const refLines = meta.target != null ? [{ label: meta.targetLabel || 'cél', value: meta.target, color: '#C9A227' }] : [];
+    toggleTrendChart(chartWrap, vitalsChartInstances, field, buildVitalsSeries(field), refLines);
+
+    chartWrap.dataset.activeKey = closingSameField ? '' : field;
+    grid.querySelectorAll('.hd-tap-card').forEach((c) => c.classList.toggle('active', !closingSameField && c.dataset.vfield === field));
   }
 
   // Reference ranges as configured on each property in the Notion "Labor" database
@@ -285,6 +400,29 @@ async function api(path, options = {}) {
     return latest;
   }
 
+  // Shows a prominent warning once the estimated surgery date is within 14
+  // days and at least one of the required-stop supplements is still checked
+  // on in today's checklist — i.e. only when there's actually something left
+  // to act on, not just because a date is near.
+  function renderSurgeryWarning(plan, checklist) {
+    const wrap = document.getElementById('hd-surgery-warning');
+    wrap.innerHTML = '';
+    if (!plan || !plan.estimatedSurgeryDate) return;
+    const daysUntil = Math.ceil((new Date(plan.estimatedSurgeryDate + 'T00:00:00') - new Date(todayKey + 'T00:00:00')) / 86400000);
+    if (daysUntil < 0 || daysUntil > 14) return;
+    const stillOn = PRE_OP_STOP_SUPPLEMENTS.filter((f) => checklist && checklist[f]);
+    if (!stillOn.length) return;
+    const div = document.createElement('div');
+    div.className = 'hd-banner';
+    div.style.borderColor = '#C1666B';
+    const p = document.createElement('p');
+    p.style.margin = '0';
+    p.textContent = (daysUntil === 0 ? 'A becsült műtéti dátum ma van.' : 'A becsült műtéti dátumig ' + daysUntil + ' nap van hátra.') +
+      ' Le kell állítani: ' + stillOn.join(', ') + ' (vérzésrizikó miatt, egyeztetve a sebészeti csapattal).';
+    div.appendChild(p);
+    wrap.appendChild(div);
+  }
+
   // Renders each non-empty line as its own <p> via textContent (never innerHTML)
   // since this text comes from the Anthropic API, not our own fixed templates.
   function renderCoachNotes(data) {
@@ -363,40 +501,64 @@ async function api(path, options = {}) {
     });
   }
 
-  function toggleLaborChart(field, itemEl) {
-    const chartWrap = itemEl.querySelector('.hd-lab-chart-wrap');
+  // Generic tap-to-expand trend chart, shared by Labor markers and vitals/sleep
+  // cards. `series` is [{ label, points: [{date, value}] }] (usually one, two
+  // for the BP sys/dia overlay); `refLines` is [{ label, value, color }]
+  // constant dashed lines (reference ranges for labs, a sleep-hours target,
+  // etc). `chartInstances` is the caller's own {key: ChartInstance} map so
+  // Labor and vitals charts don't collide, and a second tap on the same key
+  // destroys the previous canvas before removing it.
+  function toggleTrendChart(chartWrap, chartInstances, key, series, refLines) {
     const isOpen = chartWrap.style.display !== 'none';
-    if (laborChartInstances[field]) {
-      laborChartInstances[field].destroy();
-      delete laborChartInstances[field];
+    if (chartInstances[key]) {
+      chartInstances[key].destroy();
+      delete chartInstances[key];
     }
     if (isOpen) {
       chartWrap.style.display = 'none';
       chartWrap.innerHTML = '';
       return;
     }
-    const points = laborHistory
-      .filter((row) => row[field] != null)
-      .map((row) => ({ date: row.date, value: row[field] }));
-    const meta = LAB_META[field] || {};
+    if (!series.length || !series[0].points.length) {
+      chartWrap.style.display = 'block';
+      chartWrap.innerHTML = '<p style="font-size:13px; opacity:.55; margin:8px 4px;">Nincs elég adat a trendhez.</p>';
+      return;
+    }
     chartWrap.style.display = 'block';
     chartWrap.innerHTML = '<div style="position:relative; width:100%; height:160px;"><canvas></canvas></div>';
-    const datasets = [{ label: field, data: points.map((p) => p.value), borderColor: '#1B3A4B', backgroundColor: '#1B3A4B', tension: 0.15, pointRadius: 3, borderWidth: 2 }];
-    if (meta.min != null) datasets.push({ label: 'min', data: points.map(() => meta.min), borderColor: '#7A9E8E', borderDash: [4, 4], pointRadius: 0, borderWidth: 1 });
-    if (meta.max != null) datasets.push({ label: 'max', data: points.map(() => meta.max), borderColor: '#C1666B', borderDash: [4, 4], pointRadius: 0, borderWidth: 1 });
-    laborChartInstances[field] = new Chart(chartWrap.querySelector('canvas'), {
+    const labels = series[0].points.map((p) => p.date);
+    const palette = ['#1B3A4B', '#C9A227'];
+    const datasets = series.map((s, i) => ({
+      label: s.label, data: s.points.map((p) => p.value),
+      borderColor: palette[i % palette.length], backgroundColor: palette[i % palette.length],
+      tension: 0.15, pointRadius: 3, borderWidth: 2
+    }));
+    (refLines || []).forEach((line) => {
+      datasets.push({ label: line.label, data: labels.map(() => line.value), borderColor: line.color, borderDash: [4, 4], pointRadius: 0, borderWidth: 1 });
+    });
+    chartInstances[key] = new Chart(chartWrap.querySelector('canvas'), {
       type: 'line',
-      data: { labels: points.map((p) => p.date), datasets },
+      data: { labels, datasets },
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        plugins: { legend: { display: false } },
+        plugins: { legend: { display: series.length > 1 } },
         scales: {
           y: { grid: { color: '#e1e0d9' } },
           x: { grid: { display: false }, ticks: { autoSkip: true, maxRotation: 45, font: { size: 9 } } }
         }
       }
     });
+  }
+
+  function toggleLaborChart(field, itemEl) {
+    const chartWrap = itemEl.querySelector('.hd-lab-chart-wrap');
+    const points = laborHistory.filter((row) => row[field] != null).map((row) => ({ date: row.date, value: row[field] }));
+    const meta = LAB_META[field] || {};
+    const refLines = [];
+    if (meta.min != null) refLines.push({ label: 'min', value: meta.min, color: '#7A9E8E' });
+    if (meta.max != null) refLines.push({ label: 'max', value: meta.max, color: '#C1666B' });
+    toggleTrendChart(chartWrap, laborChartInstances, field, [{ label: field, points }], refLines);
   }
 
   function renderActivityChart(activities) {
@@ -478,26 +640,31 @@ async function api(path, options = {}) {
 
   async function main() {
     try {
-      const [vitals, meals, activities, checklist, labor, coachNotes] = await Promise.all([
+      const [vitals, meals, activities, checklist, labor, coachNotes, surgeryPlan, vitalsRecent] = await Promise.all([
         api('/api/vitals/today'),
         api('/api/meals/today'),
         api('/api/activity/recent'),
         api('/api/checklist/today'),
         api('/api/labor/recent?limit=100'),
-        api('/api/coach-notes')
+        api('/api/coach-notes'),
+        api('/api/surgery-plan'),
+        api('/api/vitals/recent?limit=100')
       ]);
 
+      vitalsHistory = vitalsRecent;
+      root.classList.remove('loading');
       renderVitals(vitals);
       renderMeals(meals);
       renderActivityChart(activities);
       renderLabor(labor);
       renderCoachNotes(coachNotes);
+      renderSurgeryWarning(surgeryPlan, checklist);
 
       renderChecklistRow(document.getElementById('hd-nw-list'), ['Nordic walking'], checklist, async (field, val) => {
         await api('/api/checklist/today', { method: 'POST', body: JSON.stringify({ [field]: val }) });
       });
 
-      const medGroups = { morning: [], evening: [], weekly: [], supp: [] };
+      const medGroups = { morning: [], evening: [], weekly: [], supp: [], routine: [] };
       Object.entries(MED_LABELS).forEach(([field, group]) => medGroups[group].push(field));
       const toggleMed = async (field, val) => {
         await api('/api/checklist/today', { method: 'POST', body: JSON.stringify({ [field]: val }) });
@@ -506,6 +673,7 @@ async function api(path, options = {}) {
       renderChecklistRow(document.getElementById('hd-med-evening'), medGroups.evening, checklist, toggleMed);
       renderChecklistRow(document.getElementById('hd-med-weekly'), medGroups.weekly, checklist, toggleMed);
       renderChecklistRow(document.getElementById('hd-med-supp'), medGroups.supp, checklist, toggleMed);
+      renderChecklistRow(document.getElementById('hd-med-routine'), medGroups.routine, checklist, toggleMed);
 
       renderWater(checklist.water, async (n) => {
         await api('/api/checklist/today', { method: 'POST', body: JSON.stringify({ water: n }) });
@@ -515,6 +683,7 @@ async function api(path, options = {}) {
         await api('/api/checklist/today', { method: 'POST', body: JSON.stringify({ exercises: str }) });
       });
     } catch (err) {
+      root.classList.remove('loading');
       if (err.isAuthError) {
         const cfg = getConfig();
         const saved = await showSettingsModal({

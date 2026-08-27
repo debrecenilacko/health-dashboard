@@ -112,15 +112,16 @@ async function getVitalsRecent(env, limit) {
   });
   return data.results.map((row) => {
     const p = row.properties;
-    return {
+    const out = {
       id: row.id,
       created: row.created_time,
       date: date(p['Dátum']),
       source: select(p['Forrás']),
-      weight: num(p['Súly (kg)']),
       bodyFat: num(p['Testzsír (%)']),
       bmi: num(p['BMI'])
     };
+    Object.keys(VITALS_FIELD_READERS).forEach((key) => { out[key] = VITALS_FIELD_READERS[key](p); });
+    return out;
   }).reverse();
 }
 
@@ -243,7 +244,8 @@ async function findChecklistPageToday(env) {
 
 const CHECKLIST_CHECKBOX_FIELDS = [
   'Rosuvastatin', 'Vidonorm', 'Nebilet', 'Rawel', 'Merckformin', 'Ozempic',
-  'Kreatin-glicin-taurin', 'Just Whey', 'Omega-3', 'Multivitamin', 'Nordic walking'
+  'Kreatin-glicin-taurin', 'Just Whey', 'Omega-3', 'Multivitamin', 'Nordic walking',
+  'Kurkuma-kivonat', 'NAC', 'TUDCA', 'Esti 3 órás étkezési határ', 'Exercise snack'
 ];
 
 function checklistPageToJson(row) {
@@ -383,6 +385,7 @@ Szabályok:
 - Ne állíts fel diagnózist, és ne adj konkrét gyógyszerelési/kezelési utasítást — ami ebbe a kategóriába esik, azt jelöld úgy, hogy "ezt érdemes megbeszélni az orvosoddal".
 - Emelj ki 2-4 konkrét, adatra hivatkozó megfigyelést: mi javul (konkrét számokkal, trenddel az idő múlásával), mi tartósan/ismétlődően a referenciatartományon kívül, és mi új figyelmeztető jel a legutóbbi méréshez képest a korábbiakhoz viszonyítva.
 - Ahol releváns, magyarázd el röviden a MIÉRT-et élettani/hosszú távú egészségügyi szempontból (pl. miért számít ez a healthspan szempontjából), Attia/Huberman/Patrick szemléletében, konkrét mechanizmusra hivatkozva.
+- Ha a bariatriai_mutet_terv mezőben van konzultációs és/vagy műtéti dátum, vedd figyelembe az időzítést (pl. hány hét van hátra a konzultációig/műtétig), és ha releváns a jelenlegi adatokhoz (pl. testsúly-trend, fehérjebevitel, vashiány), kösd össze a felkészüléssel — de a leállítandó kiegészítők konkrét határidejét az alkalmazás külön figyelmezetésben már jelzi, ezt nem kell megismételned, elég a nagyobb képre fókuszálni.
 - Legyél tömör: 3-5 rövid bekezdés, természetes folyó szöveg, ne listázz nyers számokat gépiesen egymás után.
 - Ha egy fontos adat hiányzik vagy régi dátumú, említsd meg, hogy érdemes lenne frissíteni.
 - Magyarul írj.`;
@@ -417,13 +420,39 @@ async function callAnthropic(env, systemPrompt, userContent) {
   return textBlock.text;
 }
 
-async function regenerateCoachNotes(env, vitals, laborHistory, fingerprint) {
+// ---- Surgery plan (bariatric consultation/op dates) ------------------------
+// Stored in the same COACH_KV namespace — just two dates, no need for a
+// dedicated resource. consultationDate defaults to the known 2026-11-13
+// consultation; estimatedSurgeryDate starts unset and is filled in once known.
+
+const SURGERY_PLAN_KV_KEY = 'surgery-plan';
+const DEFAULT_SURGERY_PLAN = { consultationDate: '2026-11-13', estimatedSurgeryDate: null };
+// Supplements the checklist tracks that must stop before surgery (per their
+// own Notion property descriptions — bleeding-risk/GI reasons, 1-2 weeks out).
+const PRE_OP_STOP_SUPPLEMENTS = ['Kurkuma-kivonat', 'NAC', 'TUDCA'];
+
+async function getSurgeryPlan(env) {
+  const plan = await env.COACH_KV.get(SURGERY_PLAN_KV_KEY, 'json');
+  return plan || DEFAULT_SURGERY_PLAN;
+}
+
+async function saveSurgeryPlan(env, body) {
+  const plan = {
+    consultationDate: typeof body.consultationDate === 'string' && body.consultationDate ? body.consultationDate : DEFAULT_SURGERY_PLAN.consultationDate,
+    estimatedSurgeryDate: typeof body.estimatedSurgeryDate === 'string' && body.estimatedSurgeryDate ? body.estimatedSurgeryDate : null
+  };
+  await env.COACH_KV.put(SURGERY_PLAN_KV_KEY, JSON.stringify(plan));
+  return plan;
+}
+
+async function regenerateCoachNotes(env, vitals, laborHistory, surgeryPlan, fingerprint) {
   try {
     const userContent = JSON.stringify({
       ma: todayISO(),
       legutobbi_ismert_meresek: vitals,
       labor_teljes_tortenet: laborHistory,
-      labor_referenciatartomanyok: LAB_REFERENCE_RANGES
+      labor_referenciatartomanyok: LAB_REFERENCE_RANGES,
+      bariatriai_mutet_terv: surgeryPlan
     });
     const notes = await callAnthropic(env, COACH_SYSTEM_PROMPT, userContent);
     await env.COACH_KV.put(COACH_KV_KEY, JSON.stringify({
@@ -448,9 +477,9 @@ async function regenerateCoachNotes(env, vitals, laborHistory, fingerprint) {
 // cancelled ("waitUntil() tasks did not complete within the allowed time").
 // A cron invocation gets its own full execution budget instead.
 async function getCoachNotes(env) {
-  const [vitals, cached] = await Promise.all([getVitalsToday(env), env.COACH_KV.get(COACH_KV_KEY, 'json')]);
+  const [vitals, cached, surgeryPlan] = await Promise.all([getVitalsToday(env), env.COACH_KV.get(COACH_KV_KEY, 'json'), getSurgeryPlan(env)]);
   if (!cached) return { notes: null, generatedAt: null, stale: true };
-  const fingerprint = await sha256Hex(JSON.stringify({ vitals, laborHistory: await getLaborRecent(env, 100) }));
+  const fingerprint = await sha256Hex(JSON.stringify({ vitals, laborHistory: await getLaborRecent(env, 100), surgeryPlan }));
   return { notes: cached.notes, generatedAt: cached.generatedAt, stale: cached.dataHash !== fingerprint };
 }
 
@@ -458,11 +487,11 @@ async function getCoachNotes(env) {
 // read + one KV read) unless the data fingerprint actually changed, in which
 // case it calls the Anthropic API and writes the fresh notes to COACH_KV.
 async function checkAndRegenerateCoachNotes(env) {
-  const [vitals, laborHistory] = await Promise.all([getVitalsToday(env), getLaborRecent(env, 100)]);
-  const fingerprint = await sha256Hex(JSON.stringify({ vitals, laborHistory }));
+  const [vitals, laborHistory, surgeryPlan] = await Promise.all([getVitalsToday(env), getLaborRecent(env, 100), getSurgeryPlan(env)]);
+  const fingerprint = await sha256Hex(JSON.stringify({ vitals, laborHistory, surgeryPlan }));
   const cached = await env.COACH_KV.get(COACH_KV_KEY, 'json');
   if (cached && cached.dataHash === fingerprint) return;
-  await regenerateCoachNotes(env, vitals, laborHistory, fingerprint);
+  await regenerateCoachNotes(env, vitals, laborHistory, surgeryPlan, fingerprint);
 }
 
 // ---- Entry point ---------------------------------------------------------
@@ -523,6 +552,13 @@ export default {
       }
       if (url.pathname === '/api/coach-notes' && request.method === 'GET') {
         return json(await getCoachNotes(env));
+      }
+      if (url.pathname === '/api/surgery-plan' && request.method === 'GET') {
+        return json(await getSurgeryPlan(env));
+      }
+      if (url.pathname === '/api/surgery-plan' && request.method === 'POST') {
+        const body = await request.json();
+        return json(await saveSurgeryPlan(env, body));
       }
       return json({ error: 'not found' }, 404);
     } catch (err) {
