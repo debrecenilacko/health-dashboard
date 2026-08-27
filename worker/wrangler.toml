@@ -13,3 +13,9 @@ DB_LABOR = "4702e64e3353476cb2a1c63ba70a1683"
 
 # A NOTION_TOKEN és APP_TOKEN NEM ide kerül — azokat titokként kell
 # beállítani (lásd README): wrangler secret put NOTION_TOKEN
+
+# Coach jegyzetek cache — csak akkor generálunk újat az Anthropic API-val,
+# ha a mérési/labor adat ténylegesen változott az utolsó generálás óta.
+[[kv_namespaces]]
+binding = "COACH_KV"
+id = "6687f63fbd674b75b72ed3154753b2ba"

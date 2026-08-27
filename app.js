@@ -285,6 +285,38 @@ async function api(path, options = {}) {
     return latest;
   }
 
+  // Renders each non-empty line as its own <p> via textContent (never innerHTML)
+  // since this text comes from the Anthropic API, not our own fixed templates.
+  function renderCoachNotes(data) {
+    const wrap = document.getElementById('hd-coach-notes');
+    wrap.innerHTML = '';
+    if (!data || !data.notes) {
+      if (data && data.stale) {
+        wrap.innerHTML = '<div class="hd-coach-card"><p class="hd-coach-title">Coach jegyzetek</p><p style="font-size:13px; opacity:.6;">Az első elemzés készül — nézz vissza néhány perc múlva.</p></div>';
+      }
+      return;
+    }
+    const card = document.createElement('div');
+    card.className = 'hd-coach-card';
+    const title = document.createElement('p');
+    title.className = 'hd-coach-title';
+    title.textContent = 'Coach jegyzetek';
+    card.appendChild(title);
+    const textWrap = document.createElement('div');
+    textWrap.className = 'hd-coach-text';
+    data.notes.split('\n').map((s) => s.trim()).filter(Boolean).forEach((line) => {
+      const p = document.createElement('p');
+      p.textContent = line;
+      textWrap.appendChild(p);
+    });
+    card.appendChild(textWrap);
+    const meta = document.createElement('p');
+    meta.className = 'hd-coach-meta';
+    meta.textContent = (data.generatedAt ? 'Frissítve: ' + data.generatedAt.slice(0, 16).replace('T', ' ') : '') + (data.stale ? ' · új adat alapján frissítés folyamatban' : '');
+    card.appendChild(meta);
+    wrap.appendChild(card);
+  }
+
   // Full ascending history, kept around so a tapped row can chart every reading
   // it ever had (not just the latest), and the Chart.js instances currently
   // shown, so a second tap can destroy the old canvas before removing it.
@@ -446,18 +478,20 @@ async function api(path, options = {}) {
 
   async function main() {
     try {
-      const [vitals, meals, activities, checklist, labor] = await Promise.all([
+      const [vitals, meals, activities, checklist, labor, coachNotes] = await Promise.all([
         api('/api/vitals/today'),
         api('/api/meals/today'),
         api('/api/activity/recent'),
         api('/api/checklist/today'),
-        api('/api/labor/recent?limit=100')
+        api('/api/labor/recent?limit=100'),
+        api('/api/coach-notes')
       ]);
 
       renderVitals(vitals);
       renderMeals(meals);
       renderActivityChart(activities);
       renderLabor(labor);
+      renderCoachNotes(coachNotes);
 
       renderChecklistRow(document.getElementById('hd-nw-list'), ['Nordic walking'], checklist, async (field, val) => {
         await api('/api/checklist/today', { method: 'POST', body: JSON.stringify({ [field]: val }) });

@@ -72,6 +72,11 @@
   .hd-lab-bottom { display: flex; justify-content: space-between; font-size: 11px; opacity: .5; font-family: 'IBM Plex Mono', monospace; margin-top: 2px; gap: 8px; }
   .hd-lab-chart-wrap { padding: 4px 4px 10px; border-bottom: 1px solid var(--line); }
   .hd-lab-item:last-child .hd-lab-chart-wrap { border-bottom: none; }
+  .hd-coach-card { background: var(--card); border: 1px solid var(--gold); border-radius: 10px; padding: 14px 16px; margin-bottom: 18px; }
+  .hd-coach-title { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--gold); font-weight: 600; margin: 0 0 8px; }
+  .hd-coach-text p { font-size: 14px; line-height: 1.55; margin: 0 0 10px; }
+  .hd-coach-text p:last-child { margin-bottom: 0; }
+  .hd-coach-meta { font-size: 11px; opacity: .5; font-family: 'IBM Plex Mono', monospace; margin-top: 10px; }
 </style>
 </head>
 <body>
@@ -153,6 +158,7 @@
   </div>
 
   <div class="hd-panel" data-panel="labor">
+    <div id="hd-coach-notes"></div>
     <div id="hd-labor-groups"></div>
     <p style="font-size:12px; opacity:.55; margin-top:12px;">Minden marker a legutóbbi ismert értékét mutatja — a dátum jelzi, mikor mérték. Piros = a Notionban tárolt referenciatartományon kívül. Koppints egy markerre a teljes trendhez.</p>
   </div>
@@ -177,6 +183,6 @@
 <!-- Bump ?v= on every deploy that touches app.js, so a stale cached index.html
      can never load a mismatched app.js (and vice versa) — this is what caused
      the "getElementById(...) is null" error after the sleep-section update. -->
-<script src="app.js?v=4"></script>
+<script src="app.js?v=5"></script>
 </body>
 </html>
