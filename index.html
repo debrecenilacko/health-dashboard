@@ -82,12 +82,15 @@
   .hd-glass.filled { background: var(--gold); border-color: var(--gold); opacity: 1; color: var(--ink); font-weight: 600; }
   .hd-water-summary { font-family: 'IBM Plex Mono', monospace; font-size: 13px; margin-top: 10px; opacity: .75; }
   .hd-sleep-debt { font-family: 'IBM Plex Mono', monospace; font-size: 13px; margin-top: 10px; opacity: .75; }
-  .hd-consist-row { padding: 8px 4px; border-bottom: 1px solid var(--line); }
-  .hd-consist-row:last-child { border-bottom: none; }
+  .hd-consist-row { padding: 8px 4px; border-bottom: 1px solid var(--line); cursor: pointer; }
+  .hd-consist-row:active { background: var(--paper); }
+  .hd-consist-item:last-child .hd-consist-row { border-bottom: none; }
   .hd-consist-top { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 4px; }
   .hd-consist-count { font-family: 'IBM Plex Mono', monospace; opacity: .65; }
   .hd-consist-bar { height: 5px; border-radius: 3px; background: var(--line); overflow: hidden; }
   .hd-consist-fill { height: 100%; background: var(--sage); border-radius: 3px; }
+  .hd-consist-chart-wrap { padding: 4px 4px 10px; border-bottom: 1px solid var(--line); }
+  .hd-consist-item:last-child .hd-consist-chart-wrap { border-bottom: none; }
   .hd-banner { background: #FFF7E0; border: 1px solid var(--gold); border-radius: 8px; padding: 10px 12px; font-size: 12px; margin-bottom: 16px; }
   .hd-topbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
   .hd-topbar .hd-date { margin-bottom: 0; }
@@ -144,6 +147,7 @@
   </nav>
 
   <div class="hd-panel active" data-panel="vitals">
+    <div id="hd-coach-vitals"></div>
     <div class="hd-grid">
       <div class="hd-card hd-tap-card" data-vfield="weight"><p class="hd-stat-label">Súly</p><p class="hd-stat-value"><span id="hd-vital-weight">—</span> <span style="font-size:12px;opacity:.6">kg</span></p></div>
       <div class="hd-card hd-tap-card" data-vfield="waist"><p class="hd-stat-label">Derékbőség</p><p class="hd-stat-value"><span id="hd-vital-waist">—</span> <span style="font-size:12px;opacity:.6">cm</span></p></div>
@@ -167,12 +171,22 @@
   </div>
 
   <div class="hd-panel" data-panel="activity">
+    <div id="hd-coach-activity"></div>
+
     <p class="hd-section-title">Mozgás ezen a héten</p>
     <div class="hd-grid">
       <div class="hd-card"><p class="hd-stat-label">Percek (7 nap)</p><p class="hd-stat-value"><span id="hd-move-minutes">—</span> <span style="font-size:12px;opacity:.6">perc</span></p></div>
       <div class="hd-card"><p class="hd-stat-label">Táv (7 nap)</p><p class="hd-stat-value"><span id="hd-move-km">—</span> <span style="font-size:12px;opacity:.6">km</span></p></div>
     </div>
     <p style="font-size:12px; opacity:.55; margin-top:6px;" id="hd-move-note"></p>
+
+    <p class="hd-section-title">Lépésszám</p>
+    <div class="hd-grid">
+      <div class="hd-card hd-tap-card" data-vfield="steps"><p class="hd-stat-label">Ma</p><p class="hd-stat-value"><span id="hd-vital-steps">—</span></p></div>
+      <div class="hd-card"><p class="hd-stat-label">Összesen (7 nap)</p><p class="hd-stat-value"><span id="hd-move-steps">—</span></p></div>
+    </div>
+    <div id="hd-steps-chart" style="display:none;"></div>
+    <p style="font-size:12px; opacity:.55; margin-top:6px;" id="hd-move-steps-note"></p>
 
     <p class="hd-section-title">Táv aktivitásonként (Strava → Notion)</p>
     <div style="position: relative; width: 100%; height: 200px;">
@@ -181,6 +195,7 @@
 
     <p class="hd-section-title">Nordic walking ma</p>
     <ul class="hd-checklist" id="hd-nw-list"></ul>
+    <p style="font-size:12px; opacity:.6; margin-top:4px;" id="hd-nw-consistency"></p>
 
     <p class="hd-section-title">Mai gyakorlatok</p>
     <ul class="hd-checklist" id="hd-ex-list"></ul>
@@ -191,6 +206,7 @@
   </div>
 
   <div class="hd-panel" data-panel="nutrition">
+    <div id="hd-coach-nutrition"></div>
     <p class="hd-section-title">Ma megevett étkezések</p>
     <div id="hd-meals-list"></div>
 
@@ -230,10 +246,14 @@
       <div class="hd-protein-goal-bar"><div class="hd-protein-goal-fill" id="hd-protein-fill"></div></div>
       <p class="hd-protein-goal-label" id="hd-protein-label"></p>
     </div>
+    <div class="hd-card hd-tap-card" id="hd-nutri-trend-card" style="margin-top:10px;"><p class="hd-stat-label">Napi fehérje trend (30 nap, koppints)</p><p class="hd-stat-value"><span id="hd-nutri-protein-avg">—</span> <span style="font-size:12px;opacity:.6">g/nap átlag</span></p></div>
+    <div id="hd-nutri-chart" style="display:none;"></div>
 
     <p class="hd-section-title">Víz (250 ml / pohár, cél: 11 pohár ≈ 2750 ml)</p>
     <div class="hd-glass-row" id="hd-water-row"></div>
     <p class="hd-water-summary" id="hd-water-summary"></p>
+    <div class="hd-card hd-tap-card" id="hd-water-trend-card"><p class="hd-stat-label">30 napos átlag (koppints a trendhez)</p><p class="hd-stat-value"><span id="hd-water-avg">—</span> <span style="font-size:12px;opacity:.6">pohár/nap</span></p></div>
+    <div id="hd-water-chart" style="display:none;"></div>
 
     <p class="hd-section-title">Emésztési tünetek (dumping stb.)</p>
     <ul class="hd-checklist" id="hd-symptom-list"></ul>
@@ -244,6 +264,7 @@
   </div>
 
   <div class="hd-panel" data-panel="meds">
+    <div id="hd-coach-meds"></div>
     <p class="hd-section-title">Reggel</p>
     <ul class="hd-checklist" id="hd-med-morning"></ul>
     <p class="hd-section-title">Este</p>
@@ -301,6 +322,6 @@
 <!-- Bump ?v= on every deploy that touches app.js, so a stale cached index.html
      can never load a mismatched app.js (and vice versa) — this is what caused
      the "getElementById(...) is null" error after the sleep-section update. -->
-<script src="app.js?v=9"></script>
+<script src="app.js?v=10"></script>
 </body>
 </html>

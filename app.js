@@ -187,8 +187,23 @@ function showSurgeryModal(plan) {
     });
   });
 
-  root.querySelectorAll('.hd-tap-card').forEach((card) => {
+  // Only cards with a data-vfield are vitals fields — the water/nutrition
+  // trend cards reuse the same .hd-tap-card styling (cursor, active border)
+  // but have their own dedicated handlers below, wired directly by id.
+  root.querySelectorAll('.hd-tap-card[data-vfield]').forEach((card) => {
     card.addEventListener('click', () => toggleVitalsCard(card.dataset.vfield, card));
+  });
+
+  document.getElementById('hd-water-trend-card').addEventListener('click', () => {
+    const chartWrap = document.getElementById('hd-water-chart');
+    const points = checklistHistoryState.filter((h) => h.water != null).map((h) => ({ date: h.date, value: h.water }));
+    toggleTrendChart(chartWrap, waterChartInstances, 'water', [{ label: 'Víz', points }], [{ label: 'cél (11)', value: 11, color: '#C9A227' }]);
+  });
+
+  document.getElementById('hd-nutri-trend-card').addEventListener('click', () => {
+    const chartWrap = document.getElementById('hd-nutri-chart');
+    const points = mealsHistoryState.map((d) => ({ date: d.date, value: d.protein }));
+    toggleTrendChart(chartWrap, nutriChartInstances, 'protein', [{ label: 'Fehérje', points }], [{ label: 'cél (80g)', value: 80, color: '#C9A227' }]);
   });
 
   const MED_LABELS = {
@@ -231,28 +246,75 @@ function showSurgeryModal(plan) {
   // so the things most worth attention surface at the top. `history` is
   // /api/checklist/recent's array (one entry per day that has a Notion row —
   // days with no row at all just don't count toward the denominator, since
-  // "never logged" and "logged but unchecked" aren't the same signal).
+  // "never logged" and "logged but unchecked" aren't the same signal). Each
+  // row now taps open a boolean (0/1) trend chart, same interaction as Labor.
+  let checklistHistoryState = [];
+  const consistencyChartInstances = {};
+  const CONSISTENCY_SYNTHETIC_FIELD = 'Gyakorlatok';
+
+  function consistencyFieldValue(h, field) {
+    return field === CONSISTENCY_SYNTHETIC_FIELD ? !!(h.exercises && h.exercises.trim()) : !!h[field];
+  }
+
   function renderConsistency(history) {
+    checklistHistoryState = history || [];
     const wrap = document.getElementById('hd-consistency-list');
     wrap.innerHTML = '';
-    if (!history || !history.length) {
+    Object.keys(consistencyChartInstances).forEach((k) => { consistencyChartInstances[k].destroy(); delete consistencyChartInstances[k]; });
+    if (!checklistHistoryState.length) {
       wrap.innerHTML = '<p style="font-size:13px; opacity:.55;">Nincs elég adat.</p>';
       return;
     }
-    const total = history.length;
-    const rows = Object.keys(MED_LABELS).map((field) => {
-      const count = history.filter((h) => h[field]).length;
-      return { label: DISPLAY_NAME[field] || field, count, pct: Math.round((count / total) * 100) };
+    const total = checklistHistoryState.length;
+    const fields = Object.keys(MED_LABELS).concat([CONSISTENCY_SYNTHETIC_FIELD]);
+    const rows = fields.map((field) => {
+      const count = checklistHistoryState.filter((h) => consistencyFieldValue(h, field)).length;
+      const label = field === CONSISTENCY_SYNTHETIC_FIELD ? 'Gyakorlatok naplózva' : (DISPLAY_NAME[field] || field);
+      return { field, label, count, pct: Math.round((count / total) * 100) };
     }).sort((a, b) => a.pct - b.pct);
 
     rows.forEach((r) => {
+      const item = document.createElement('div');
       const row = document.createElement('div');
       row.className = 'hd-consist-row';
       row.innerHTML =
         '<div class="hd-consist-top"><span>' + r.label + '</span><span class="hd-consist-count">' + r.count + '/' + total + '</span></div>' +
         '<div class="hd-consist-bar"><div class="hd-consist-fill" style="width:' + r.pct + '%;"></div></div>';
-      wrap.appendChild(row);
+      const chartWrap = document.createElement('div');
+      chartWrap.className = 'hd-consist-chart-wrap';
+      chartWrap.style.display = 'none';
+      row.addEventListener('click', () => toggleConsistencyChart(r.field, item));
+      item.appendChild(row);
+      item.appendChild(chartWrap);
+      wrap.appendChild(item);
     });
+  }
+
+  function toggleConsistencyChart(field, itemEl) {
+    const chartWrap = itemEl.querySelector('.hd-consist-chart-wrap');
+    const points = checklistHistoryState.map((h) => ({ date: h.date, value: consistencyFieldValue(h, field) ? 1 : 0 }));
+    toggleTrendChart(chartWrap, consistencyChartInstances, field, [{ label: field, points }], []);
+  }
+
+  function renderNordicWalkingConsistency(history) {
+    const el = document.getElementById('hd-nw-consistency');
+    if (!history || !history.length) { el.textContent = ''; return; }
+    const count = history.filter((h) => h['Nordic walking']).length;
+    el.textContent = 'Konzisztencia (' + history.length + ' nap): ' + count + '/' + history.length + ' nap';
+  }
+
+  function renderWaterAverage(history) {
+    const el = document.getElementById('hd-water-avg');
+    const withWater = (history || []).filter((h) => h.water != null);
+    if (!withWater.length) { el.textContent = '—'; return; }
+    el.textContent = Math.round((withWater.reduce((sum, h) => sum + h.water, 0) / withWater.length) * 10) / 10;
+  }
+
+  function renderNutritionTrendStat(mealsRecent) {
+    mealsHistoryState = mealsRecent || [];
+    const el = document.getElementById('hd-nutri-protein-avg');
+    if (!mealsHistoryState.length) { el.textContent = '—'; return; }
+    el.textContent = Math.round(mealsHistoryState.reduce((sum, d) => sum + (d.protein || 0), 0) / mealsHistoryState.length);
   }
 
   function renderMeals(meals) {
@@ -320,6 +382,7 @@ function showSurgeryModal(plan) {
     document.getElementById('hd-vital-sleep-deep').textContent = vitals.sleepDeepMin ?? '—';
     document.getElementById('hd-vital-sleep-rem').textContent = vitals.sleepRemMin ?? '—';
     document.getElementById('hd-vital-sleep-pulse').textContent = vitals.sleepRestingPulse ?? '—';
+    document.getElementById('hd-vital-steps').textContent = vitals.steps ?? '—';
   }
 
   const SLEEP_GOAL_HOURS = 8;
@@ -345,9 +408,15 @@ function showSurgeryModal(plan) {
   // doctor/program, not a guess baked into the app.
   const VITALS_CHART_META = { sleepHours: { target: 8, targetLabel: 'cél (8 óra)' } };
   const SLEEP_FIELDS = ['sleepHours', 'sleepDeepMin', 'sleepRemMin', 'sleepRestingPulse'];
+  // Fields whose tap-to-expand chart lives outside the two default vitals/
+  // sleep chart areas (e.g. steps sits on the Mozgás tab, not Mérések).
+  const VITALS_CHART_WRAP_OVERRIDE = { steps: 'hd-steps-chart' };
   let vitalsHistory = [];
   let surgeryPlanState = null;
   const vitalsChartInstances = {};
+  const waterChartInstances = {};
+  const nutriChartInstances = {};
+  let mealsHistoryState = [];
 
   function buildVitalsSeries(field) {
     if (field === 'bp') {
@@ -371,7 +440,8 @@ function showSurgeryModal(plan) {
   }
 
   function toggleVitalsCard(field, cardEl) {
-    const chartWrap = document.getElementById(SLEEP_FIELDS.indexOf(field) !== -1 ? 'hd-sleep-chart' : 'hd-vitals-chart');
+    const wrapId = VITALS_CHART_WRAP_OVERRIDE[field] || (SLEEP_FIELDS.indexOf(field) !== -1 ? 'hd-sleep-chart' : 'hd-vitals-chart');
+    const chartWrap = document.getElementById(wrapId);
     const grid = cardEl.parentElement;
     const prevKey = chartWrap.dataset.activeKey;
     const wasOpen = chartWrap.style.display !== 'none';
@@ -500,11 +570,12 @@ function showSurgeryModal(plan) {
 
   // Renders each non-empty line as its own <p> via textContent (never innerHTML)
   // since this text comes from the Anthropic API, not our own fixed templates.
-  function renderCoachNotes(data) {
-    const wrap = document.getElementById('hd-coach-notes');
+  function renderCoachSection(containerId, text, generatedAt, stale) {
+    const wrap = document.getElementById(containerId);
+    if (!wrap) return;
     wrap.innerHTML = '';
-    if (!data || !data.notes) {
-      if (data && data.stale) {
+    if (!text) {
+      if (stale) {
         wrap.innerHTML = '<div class="hd-coach-card"><p class="hd-coach-title">Coach jegyzetek</p><p style="font-size:13px; opacity:.6;">Az első elemzés készül — nézz vissza néhány perc múlva.</p></div>';
       }
       return;
@@ -517,7 +588,7 @@ function showSurgeryModal(plan) {
     card.appendChild(title);
     const textWrap = document.createElement('div');
     textWrap.className = 'hd-coach-text';
-    data.notes.split('\n').map((s) => s.trim()).filter(Boolean).forEach((line) => {
+    text.split('\n').map((s) => s.trim()).filter(Boolean).forEach((line) => {
       const p = document.createElement('p');
       p.textContent = line;
       textWrap.appendChild(p);
@@ -525,9 +596,17 @@ function showSurgeryModal(plan) {
     card.appendChild(textWrap);
     const meta = document.createElement('p');
     meta.className = 'hd-coach-meta';
-    meta.textContent = (data.generatedAt ? 'Frissítve: ' + data.generatedAt.slice(0, 16).replace('T', ' ') : '') + (data.stale ? ' · új adat alapján frissítés folyamatban' : '');
+    meta.textContent = (generatedAt ? 'Frissítve: ' + generatedAt.slice(0, 16).replace('T', ' ') : '') + (stale ? ' · új adat alapján frissítés folyamatban' : '');
     card.appendChild(meta);
     wrap.appendChild(card);
+  }
+
+  const COACH_SECTION_TARGETS = { vitals: 'hd-coach-vitals', activity: 'hd-coach-activity', nutrition: 'hd-coach-nutrition', meds: 'hd-coach-meds', labor: 'hd-coach-notes' };
+  function renderAllCoachSections(data) {
+    const sections = (data && data.sections) || {};
+    Object.keys(COACH_SECTION_TARGETS).forEach((key) => {
+      renderCoachSection(COACH_SECTION_TARGETS[key], sections[key], data && data.generatedAt, data && data.stale);
+    });
   }
 
   // Full ascending history, kept around so a tapped row can chart every reading
@@ -659,10 +738,11 @@ function showSurgeryModal(plan) {
     toggleTrendChart(chartWrap, laborChartInstances, field, [{ label: field, points }], refLines);
   }
 
-  // General movement guideline (~150 min/week moderate activity is the
-  // common WHO/Attia-cited baseline) — shown as context, not a personalized
-  // prescription.
+  // General movement guidelines (~150 min/week moderate activity, ~70,000
+  // steps/week i.e. ~10k/day, are common WHO/Attia-cited baselines) — shown
+  // as context, not a personalized prescription.
   const WEEKLY_MOVEMENT_TARGET_MIN = 150;
+  const WEEKLY_STEPS_TARGET = 70000;
   function renderMovementRollup(activities) {
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - 7);
@@ -677,6 +757,18 @@ function showSurgeryModal(plan) {
       note.textContent = 'A ~' + WEEKLY_MOVEMENT_TARGET_MIN + ' perces heti irányszám (WHO/Attia-féle általános ajánlás) teljesítve.';
     } else {
       note.textContent = 'Általános irányszám ~' + WEEKLY_MOVEMENT_TARGET_MIN + ' perc/hét — még ' + (WEEKLY_MOVEMENT_TARGET_MIN - minutes) + ' perc hiányzik.';
+    }
+
+    const recentSteps = vitalsHistory.filter((r) => r.date >= cutoffKey && r.steps != null);
+    const steps = recentSteps.reduce((sum, r) => sum + r.steps, 0);
+    document.getElementById('hd-move-steps').textContent = recentSteps.length ? steps : '—';
+    const stepsNote = document.getElementById('hd-move-steps-note');
+    if (!recentSteps.length) {
+      stepsNote.textContent = '';
+    } else if (steps >= WEEKLY_STEPS_TARGET) {
+      stepsNote.textContent = 'A ~' + WEEKLY_STEPS_TARGET.toLocaleString('hu-HU') + ' lépéses heti irányszám (kb. napi 10 000) teljesítve.';
+    } else {
+      stepsNote.textContent = 'Általános irányszám ~' + WEEKLY_STEPS_TARGET.toLocaleString('hu-HU') + ' lépés/hét — még ' + (WEEKLY_STEPS_TARGET - steps).toLocaleString('hu-HU') + ' lépés hiányzik.';
     }
   }
 
@@ -761,7 +853,7 @@ function showSurgeryModal(plan) {
 
   async function main() {
     try {
-      const [vitals, meals, activities, checklist, labor, coachNotes, surgeryPlan, vitalsRecent, checklistRecent] = await Promise.all([
+      const [vitals, meals, activities, checklist, labor, coachNotes, surgeryPlan, vitalsRecent, checklistRecent, mealsRecent] = await Promise.all([
         api('/api/vitals/today'),
         api('/api/meals/today'),
         api('/api/activity/recent'),
@@ -770,7 +862,8 @@ function showSurgeryModal(plan) {
         api('/api/coach-notes'),
         api('/api/surgery-plan'),
         api('/api/vitals/recent?limit=100'),
-        api('/api/checklist/recent?days=30')
+        api('/api/checklist/recent?days=30'),
+        api('/api/meals/recent?days=30')
       ]);
 
       vitalsHistory = vitalsRecent;
@@ -779,11 +872,14 @@ function showSurgeryModal(plan) {
       renderVitals(vitals);
       renderSleepDebt(vitalsHistory);
       renderMeals(meals);
+      renderNutritionTrendStat(mealsRecent);
       renderActivityChart(activities);
       renderMovementRollup(activities);
       renderConsistency(checklistRecent);
+      renderNordicWalkingConsistency(checklistRecent);
+      renderWaterAverage(checklistRecent);
       renderLabor(labor);
-      renderCoachNotes(coachNotes);
+      renderAllCoachSections(coachNotes);
       renderSurgeryWarning(surgeryPlan, checklist);
 
       renderChecklistRow(document.getElementById('hd-nw-list'), ['Nordic walking'], checklist, async (field, val) => {

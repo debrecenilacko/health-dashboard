@@ -199,6 +199,37 @@ async function getMealsToday(env) {
   });
 }
 
+// Unlike getMealsToday (one exact-date filter), this covers a date range and
+// aggregates multiple meals on the same day into one point per day, since
+// Étkezések rows are per-meal, not per-day, and a trend chart wants one
+// value per day.
+async function getMealsRecent(env, days) {
+  const start = new Date();
+  start.setDate(start.getDate() - Math.min(days || 30, 90));
+  const data = await notion(env, `/databases/${env.DB_ETKEZESEK}/query`, {
+    method: 'POST',
+    body: JSON.stringify({
+      filter: { property: 'Dátum', date: { on_or_after: start.toISOString().slice(0, 10) } },
+      sorts: [{ property: 'Dátum', direction: 'ascending' }],
+      page_size: 100
+    })
+  });
+  const byDate = {};
+  data.results.forEach((row) => {
+    const p = row.properties;
+    const d = date(p['Dátum']);
+    if (!d) return;
+    if (!byDate[d]) byDate[d] = { date: d, calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, sugar: 0 };
+    byDate[d].calories += num(p['Kalória']) || 0;
+    byDate[d].protein += num(p['Fehérje (g)']) || 0;
+    byDate[d].carbs += num(p['Szénhidrát (g)']) || 0;
+    byDate[d].fat += num(p['Zsír (g)']) || 0;
+    byDate[d].fiber += num(p['Rost (g)']) || 0;
+    byDate[d].sugar += num(p['Cukor (g)']) || 0;
+  });
+  return Object.values(byDate).sort((a, b) => a.date.localeCompare(b.date));
+}
+
 async function postMealLog(env, body) {
   const type = typeof body.type === 'string' && body.type ? body.type : 'Snack';
   const desc = typeof body.desc === 'string' ? body.desc : '';
@@ -407,16 +438,33 @@ const LAB_REFERENCE_RANGES = {
   'eGFR': '>90 mL/min/1.73m2', 'Összbilirubin': '5.0–21.0 umol/L', 'Összfehérje': '66.0–87.0 g/L'
 };
 
-const COACH_SYSTEM_PROMPT = `Egy felelős, részletes wellness coach vagy — NEM orvos —, aki Peter Attia (Outlive), Andrew Huberman és Rhonda Patrick szemléletében, hosszú távú egészség- (healthspan-) és teljesítményszemlélettel elemzi a felhasználó mérési és labor adatait.
+// Five short, tab-scoped sections instead of one long Labor-only blob — each
+// analyzes only its own domain's trend so it's readable inline on that tab.
+const COACH_SYSTEM_PROMPT = `Egy felelős wellness coach vagy — NEM orvos —, aki Peter Attia (Outlive), Andrew Huberman és Rhonda Patrick szemléletében, hosszú távú egészség- (healthspan-) és teljesítményszemlélettel elemzi a felhasználó adatait.
 
-Szabályok:
+A bemenet öt adatterületet tartalmaz: mérési (vitals), mozgás (activity), táplálkozás (nutrition), gyógyszer/kiegészítő/rutin-betartás (meds), és labor (labor). Minden területhez írj egy KÜLÖN, RÖVID elemzést — ezek külön-külön jelennek meg az app megfelelő fülén, szóval mindegyiknek önmagában is értelmesnek kell lennie.
+
+Szabályok minden szekcióra:
 - Ne állíts fel diagnózist, és ne adj konkrét gyógyszerelési/kezelési utasítást — ami ebbe a kategóriába esik, azt jelöld úgy, hogy "ezt érdemes megbeszélni az orvosoddal".
-- Emelj ki 2-4 konkrét, adatra hivatkozó megfigyelést: mi javul (konkrét számokkal, trenddel az idő múlásával), mi tartósan/ismétlődően a referenciatartományon kívül, és mi új figyelmeztető jel a legutóbbi méréshez képest a korábbiakhoz viszonyítva.
-- Ahol releváns, magyarázd el röviden a MIÉRT-et élettani/hosszú távú egészségügyi szempontból (pl. miért számít ez a healthspan szempontjából), Attia/Huberman/Patrick szemléletében, konkrét mechanizmusra hivatkozva.
-- Ha a bariatriai_mutet_terv mezőben van konzultációs és/vagy műtéti dátum, vedd figyelembe az időzítést (pl. hány hét van hátra a konzultációig/műtétig), és ha releváns a jelenlegi adatokhoz (pl. testsúly-trend, fehérjebevitel, vashiány), kösd össze a felkészüléssel — de a leállítandó kiegészítők konkrét határidejét az alkalmazás külön figyelmezetésben már jelzi, ezt nem kell megismételned, elég a nagyobb képre fókuszálni.
-- Legyél tömör: 3-5 rövid bekezdés, természetes folyó szöveg, ne listázz nyers számokat gépiesen egymás után.
-- Ha egy fontos adat hiányzik vagy régi dátumú, említsd meg, hogy érdemes lenne frissíteni.
-- Magyarul írj.`;
+- Konkrét, adatra hivatkozó megfigyelés a trendről (mi javul, mi romlik, mi stagnál — számokkal), rövid MIÉRT (healthspan-szempontú mechanizmus), és egy konkrét következő lépés.
+- Ha egy terülehez nincs elég adat, mondd ki röviden ahelyett, hogy kitalálnál valamit.
+- A "labor" szekció lehet a leghosszabb (3-5 bekezdés) — a többi (vitals/activity/nutrition/meds) legyen tömör, 1-2 rövid bekezdés.
+- Ha a bariatriai_mutet_terv mezőben van dátum, és relevá­ns az adott szekcióhoz (pl. vitals: testsúly-trend a műtét előtt; meds: kiegészítők — de a konkrét leállítási határidőt az app külön figyelmezetésben már jelzi, ezt ne ismételd meg), említsd meg röviden.
+- Magyarul írj.
+
+VÁLASZ FORMÁTUM: kizárólag egy nyers JSON objektumot adj vissza, semmi mást — se markdown code fence-t, se bevezető szöveget. Pontosan ezekkel a kulcsokkal: {"vitals": "...", "activity": "...", "nutrition": "...", "meds": "...", "labor": "..."}. Minden érték egy sima szöveg (bekezdéseket \\n\\n-vel elválasztva), nem beágyazott objektum.`;
+
+// Anthropic occasionally wraps JSON in a markdown code fence despite being
+// told not to — strip it before parsing rather than failing the whole batch.
+function parseCoachSections(text) {
+  const cleaned = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
+  const parsed = JSON.parse(cleaned);
+  const sections = {};
+  ['vitals', 'activity', 'nutrition', 'meds', 'labor'].forEach((key) => {
+    sections[key] = typeof parsed[key] === 'string' ? parsed[key] : null;
+  });
+  return sections;
+}
 
 async function sha256Hex(str) {
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
@@ -433,7 +481,12 @@ async function callAnthropic(env, systemPrompt, userContent) {
     },
     body: JSON.stringify({
       model: 'claude-opus-5',
-      max_tokens: 4096,
+      max_tokens: 6144,
+      // "medium" effort — this task (5 short-to-medium coaching blurbs from
+      // structured data) doesn't need max-depth reasoning, and full-depth
+      // thinking on top of 5 sections was pushing generation past ~120s,
+      // occasionally hitting a 524 gateway timeout on this background call.
+      output_config: { effort: 'medium' },
       system: systemPrompt,
       messages: [{ role: 'user', content: userContent }]
     })
@@ -473,25 +526,43 @@ async function saveSurgeryPlan(env, body) {
   return plan;
 }
 
-async function regenerateCoachNotes(env, vitals, laborHistory, surgeryPlan, fingerprint) {
+// Everything the coach prompt reasons over, gathered once per request/tick.
+async function gatherCoachInputs(env) {
+  const [vitals, laborHistory, surgeryPlan, checklistHistory, activityHistory, mealsHistory] = await Promise.all([
+    getVitalsToday(env),
+    getLaborRecent(env, 100),
+    getSurgeryPlan(env),
+    getChecklistRecent(env, 30),
+    getActivityRecent(env),
+    getMealsRecent(env, 30)
+  ]);
+  return { vitals, laborHistory, surgeryPlan, checklistHistory, activityHistory, mealsHistory };
+}
+
+async function regenerateCoachNotes(env, inputs, fingerprint) {
   try {
     const userContent = JSON.stringify({
       ma: todayISO(),
-      legutobbi_ismert_meresek: vitals,
-      labor_teljes_tortenet: laborHistory,
+      legutobbi_ismert_meresek: inputs.vitals,
+      labor_teljes_tortenet: inputs.laborHistory,
       labor_referenciatartomanyok: LAB_REFERENCE_RANGES,
-      bariatriai_mutet_terv: surgeryPlan
+      bariatriai_mutet_terv: inputs.surgeryPlan,
+      napi_checklist_30_nap: inputs.checklistHistory,
+      mozgas_tortenet: inputs.activityHistory,
+      taplalkozas_napi_osszesitve_30_nap: inputs.mealsHistory
     });
-    const notes = await callAnthropic(env, COACH_SYSTEM_PROMPT, userContent);
+    const raw = await callAnthropic(env, COACH_SYSTEM_PROMPT, userContent);
+    const sections = parseCoachSections(raw);
     await env.COACH_KV.put(COACH_KV_KEY, JSON.stringify({
-      notes,
+      sections,
       generatedAt: new Date().toISOString(),
       dataHash: fingerprint
     }));
   } catch (err) {
-    // Leave whatever notes/hash are already cached in place — since dataHash
-    // is untouched on failure, the next request will naturally retry instead
-    // of getting stuck on a bad write.
+    // Leave whatever's already cached in place — since dataHash is untouched
+    // on failure, the next request will naturally retry instead of getting
+    // stuck on a bad write. Also catches a malformed-JSON response from
+    // parseCoachSections, not just network/API errors.
     console.error('coach notes regeneration failed:', err);
   }
 }
@@ -505,21 +576,22 @@ async function regenerateCoachNotes(env, vitals, laborHistory, surgeryPlan, fing
 // cancelled ("waitUntil() tasks did not complete within the allowed time").
 // A cron invocation gets its own full execution budget instead.
 async function getCoachNotes(env) {
-  const [vitals, cached, surgeryPlan] = await Promise.all([getVitalsToday(env), env.COACH_KV.get(COACH_KV_KEY, 'json'), getSurgeryPlan(env)]);
-  if (!cached) return { notes: null, generatedAt: null, stale: true };
-  const fingerprint = await sha256Hex(JSON.stringify({ vitals, laborHistory: await getLaborRecent(env, 100), surgeryPlan }));
-  return { notes: cached.notes, generatedAt: cached.generatedAt, stale: cached.dataHash !== fingerprint };
+  const [inputs, cached] = await Promise.all([gatherCoachInputs(env), env.COACH_KV.get(COACH_KV_KEY, 'json')]);
+  if (!cached) return { sections: null, generatedAt: null, stale: true };
+  const fingerprint = await sha256Hex(JSON.stringify(inputs));
+  return { sections: cached.sections, generatedAt: cached.generatedAt, stale: cached.dataHash !== fingerprint };
 }
 
-// Runs on the cron schedule in wrangler.toml. Cheap on every tick (one Notion
-// read + one KV read) unless the data fingerprint actually changed, in which
-// case it calls the Anthropic API and writes the fresh notes to COACH_KV.
+// Runs on the cron schedule in wrangler.toml. Cheap on every tick (a handful
+// of Notion reads + one KV read) unless the data fingerprint actually
+// changed, in which case it calls the Anthropic API and writes the fresh
+// sections to COACH_KV.
 async function checkAndRegenerateCoachNotes(env) {
-  const [vitals, laborHistory, surgeryPlan] = await Promise.all([getVitalsToday(env), getLaborRecent(env, 100), getSurgeryPlan(env)]);
-  const fingerprint = await sha256Hex(JSON.stringify({ vitals, laborHistory, surgeryPlan }));
+  const inputs = await gatherCoachInputs(env);
+  const fingerprint = await sha256Hex(JSON.stringify(inputs));
   const cached = await env.COACH_KV.get(COACH_KV_KEY, 'json');
   if (cached && cached.dataHash === fingerprint) return;
-  await regenerateCoachNotes(env, vitals, laborHistory, surgeryPlan, fingerprint);
+  await regenerateCoachNotes(env, inputs, fingerprint);
 }
 
 // ---- Entry point ---------------------------------------------------------
@@ -555,6 +627,10 @@ export default {
       if (url.pathname === '/api/meals/log' && request.method === 'POST') {
         const body = await request.json();
         return json(await postMealLog(env, body));
+      }
+      if (url.pathname === '/api/meals/recent' && request.method === 'GET') {
+        const days = Number(url.searchParams.get('days')) || 30;
+        return json(await getMealsRecent(env, days));
       }
       if (url.pathname === '/api/activity/recent' && request.method === 'GET') {
         return json(await getActivityRecent(env));
