@@ -62,31 +62,47 @@ const title = (p) => (p && p.title && p.title[0] ? p.title[0].plain_text : '');
 
 // ---- Routes ------------------------------------------------------------
 
+// Each measurement source (manual entry, Renpho, Apple Watch, Mi Fitness) can write its
+// own row for the same day, and each only fills in the fields it actually measures — so
+// the single newest row is often mostly empty (e.g. an Apple Watch sleep sync with no
+// weight/BP at all). Scan back through recent rows and take the latest non-null value
+// per field instead, so a BP/waist entry doesn't get masked by a later weight-only sync.
+const VITALS_FIELD_READERS = {
+  weight: (p) => num(p['Súly (kg)']),
+  waist: (p) => num(p['Derékbőség (cm)']),
+  sys: (p) => num(p['Sys (Hgmm)']),
+  dia: (p) => num(p['Dia (Hgmm)']),
+  pulse: (p) => num(p['Pulzus (/perc)']),
+  glucose: (p) => num(p['Vércukor (mmol/l)']),
+  sleepHours: (p) => num(p['Alvás összesen (óra)']),
+  sleepDeepMin: (p) => num(p['Mély alvás (perc)']),
+  sleepRemMin: (p) => num(p['REM alvás (perc)']),
+  sleepScore: (p) => num(p['Alvás pontszám']),
+  sleepRestingPulse: (p) => num(p['Nyugalmi pulzus alvás közben (/perc)']),
+  steps: (p) => num(p['Lépésszám']),
+  activeEnergy: (p) => num(p['Aktív energia (kcal)']),
+  hrv: (p) => num(p['HRV (ms)'])
+};
+
 async function getVitalsToday(env) {
   const data = await notion(env, `/databases/${env.DB_MERESEK}/query`, {
     method: 'POST',
-    body: JSON.stringify({ sorts: [{ property: 'Dátum', direction: 'descending' }], page_size: 1 })
+    body: JSON.stringify({ sorts: [{ property: 'Dátum', direction: 'descending' }], page_size: 20 })
   });
-  const row = data.results[0];
-  if (!row) return null;
-  const p = row.properties;
-  return {
-    date: date(p['Dátum']),
-    weight: num(p['Súly (kg)']),
-    waist: num(p['Derékbőség (cm)']),
-    sys: num(p['Sys (Hgmm)']),
-    dia: num(p['Dia (Hgmm)']),
-    pulse: num(p['Pulzus (/perc)']),
-    glucose: num(p['Vércukor (mmol/l)']),
-    sleepHours: num(p['Alvás összesen (óra)']),
-    sleepDeepMin: num(p['Mély alvás (perc)']),
-    sleepRemMin: num(p['REM alvás (perc)']),
-    sleepScore: num(p['Alvás pontszám']),
-    sleepRestingPulse: num(p['Nyugalmi pulzus alvás közben (/perc)']),
-    steps: num(p['Lépésszám']),
-    activeEnergy: num(p['Aktív energia (kcal)']),
-    hrv: num(p['HRV (ms)'])
-  };
+  if (!data.results.length) return null;
+
+  const out = { date: date(data.results[0].properties['Dátum']) };
+  Object.keys(VITALS_FIELD_READERS).forEach((key) => { out[key] = null; });
+  for (const row of data.results) {
+    const p = row.properties;
+    for (const key of Object.keys(VITALS_FIELD_READERS)) {
+      if (out[key] == null) {
+        const v = VITALS_FIELD_READERS[key](p);
+        if (v != null) out[key] = v;
+      }
+    }
+  }
+  return out;
 }
 
 async function getVitalsRecent(env, limit) {

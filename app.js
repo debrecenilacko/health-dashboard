@@ -13,6 +13,17 @@ function saveConfig(cfg) {
   localStorage.setItem(CONFIG_KEY, JSON.stringify(cfg));
 }
 
+// Forgives the common typos that turn into a 404: missing scheme, a
+// trailing slash, or pasting the URL with "/api" already on the end.
+function normalizeApiBase(raw) {
+  let v = raw.trim();
+  if (!v) return v;
+  if (!/^https?:\/\//i.test(v)) v = 'https://' + v;
+  v = v.replace(/\/+$/, '');
+  v = v.replace(/\/api$/i, '');
+  return v;
+}
+
 // Shows the backend-settings modal and resolves once the user saves (true)
 // or cancels (false). The token field is always left blank on open — it's
 // never re-displayed once saved, since there's no way to read it back out
@@ -41,7 +52,7 @@ function showSettingsModal({ apiBase = '', errorMessage = '', allowCancel = true
       tokenInput.removeEventListener('keydown', onKey);
     }
     function onSave() {
-      const newApiBase = apiInput.value.trim().replace(/\/$/, '');
+      const newApiBase = normalizeApiBase(apiInput.value);
       const newToken = tokenInput.value.trim();
       if (!newApiBase || !newToken) {
         errorEl.textContent = 'Add meg mindkét mezőt.';
@@ -187,6 +198,10 @@ async function api(path, options = {}) {
     document.getElementById('hd-vital-waist').textContent = vitals.waist ?? '—';
     document.getElementById('hd-vital-bp').textContent = (vitals.sys ?? '—') + '/' + (vitals.dia ?? '—');
     document.getElementById('hd-vital-pulse').textContent = vitals.pulse ?? '—';
+    document.getElementById('hd-vital-sleep-hours').textContent = vitals.sleepHours ?? '—';
+    document.getElementById('hd-vital-sleep-deep').textContent = vitals.sleepDeepMin ?? '—';
+    document.getElementById('hd-vital-sleep-rem').textContent = vitals.sleepRemMin ?? '—';
+    document.getElementById('hd-vital-sleep-pulse').textContent = vitals.sleepRestingPulse ?? '—';
   }
 
   function renderActivityChart(activities) {
