@@ -346,6 +346,7 @@ function showSurgeryModal(plan) {
   const VITALS_CHART_META = { sleepHours: { target: 8, targetLabel: 'cél (8 óra)' } };
   const SLEEP_FIELDS = ['sleepHours', 'sleepDeepMin', 'sleepRemMin', 'sleepRestingPulse'];
   let vitalsHistory = [];
+  let surgeryPlanState = null;
   const vitalsChartInstances = {};
 
   function buildVitalsSeries(field) {
@@ -382,7 +383,12 @@ function showSurgeryModal(plan) {
 
     const meta = VITALS_CHART_META[field] || {};
     const refLines = meta.target != null ? [{ label: meta.targetLabel || 'cél', value: meta.target, color: '#C9A227' }] : [];
-    toggleTrendChart(chartWrap, vitalsChartInstances, field, buildVitalsSeries(field), refLines);
+    const markers = [];
+    if (field === 'weight' && surgeryPlanState) {
+      if (surgeryPlanState.consultationDate) markers.push({ date: surgeryPlanState.consultationDate, label: 'Konzultáció', color: '#7A9E8E' });
+      if (surgeryPlanState.estimatedSurgeryDate) markers.push({ date: surgeryPlanState.estimatedSurgeryDate, label: 'Műtét (becsült)', color: '#C1666B' });
+    }
+    toggleTrendChart(chartWrap, vitalsChartInstances, field, buildVitalsSeries(field), refLines, markers);
 
     chartWrap.dataset.activeKey = closingSameField ? '' : field;
     grid.querySelectorAll('.hd-tap-card').forEach((c) => c.classList.toggle('active', !closingSameField && c.dataset.vfield === field));
@@ -577,7 +583,12 @@ function showSurgeryModal(plan) {
   // etc). `chartInstances` is the caller's own {key: ChartInstance} map so
   // Labor and vitals charts don't collide, and a second tap on the same key
   // destroys the previous canvas before removing it.
-  function toggleTrendChart(chartWrap, chartInstances, key, series, refLines) {
+  // `markers` (optional) is [{date, label, color}] — vertical event lines via
+  // chartjs-plugin-annotation (surgery consultation/op dates, etc). A category
+  // x-axis can only anchor an annotation at an existing label, so a marker's
+  // date is unioned into the label set even when nothing was measured that
+  // day (spanGaps on each series keeps the line looking normal across it).
+  function toggleTrendChart(chartWrap, chartInstances, key, series, refLines, markers) {
     const isOpen = chartWrap.style.display !== 'none';
     if (chartInstances[key]) {
       chartInstances[key].destroy();
@@ -595,23 +606,41 @@ function showSurgeryModal(plan) {
     }
     chartWrap.style.display = 'block';
     chartWrap.innerHTML = '<div style="position:relative; width:100%; height:160px;"><canvas></canvas></div>';
-    const labels = series[0].points.map((p) => p.date);
+
+    const labelSet = new Set();
+    series.forEach((s) => s.points.forEach((p) => labelSet.add(p.date)));
+    (markers || []).forEach((m) => labelSet.add(m.date));
+    const labels = [...labelSet].sort();
+
     const palette = ['#1B3A4B', '#C9A227'];
-    const datasets = series.map((s, i) => ({
-      label: s.label, data: s.points.map((p) => p.value),
-      borderColor: palette[i % palette.length], backgroundColor: palette[i % palette.length],
-      tension: 0.15, pointRadius: 3, borderWidth: 2
-    }));
+    const datasets = series.map((s, i) => {
+      const byDate = {};
+      s.points.forEach((p) => { byDate[p.date] = p.value; });
+      return {
+        label: s.label, data: labels.map((d) => (d in byDate ? byDate[d] : null)),
+        borderColor: palette[i % palette.length], backgroundColor: palette[i % palette.length],
+        tension: 0.15, pointRadius: 3, borderWidth: 2, spanGaps: true
+      };
+    });
     (refLines || []).forEach((line) => {
       datasets.push({ label: line.label, data: labels.map(() => line.value), borderColor: line.color, borderDash: [4, 4], pointRadius: 0, borderWidth: 1 });
     });
+
+    const annotations = {};
+    (markers || []).forEach((m, i) => {
+      annotations['marker' + i] = {
+        type: 'line', xMin: m.date, xMax: m.date, borderColor: m.color || '#C1666B', borderWidth: 2, borderDash: [3, 3],
+        label: { display: true, content: m.label, position: 'start', font: { size: 9 }, backgroundColor: m.color || '#C1666B', color: '#fff', padding: 3 }
+      };
+    });
+
     chartInstances[key] = new Chart(chartWrap.querySelector('canvas'), {
       type: 'line',
       data: { labels, datasets },
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        plugins: { legend: { display: series.length > 1 } },
+        plugins: { legend: { display: series.length > 1 }, annotation: { annotations } },
         scales: {
           y: { grid: { color: '#e1e0d9' } },
           x: { grid: { display: false }, ticks: { autoSkip: true, maxRotation: 45, font: { size: 9 } } }
@@ -745,6 +774,7 @@ function showSurgeryModal(plan) {
       ]);
 
       vitalsHistory = vitalsRecent;
+      surgeryPlanState = surgeryPlan;
       root.classList.remove('loading');
       renderVitals(vitals);
       renderSleepDebt(vitalsHistory);
