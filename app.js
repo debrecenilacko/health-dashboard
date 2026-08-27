@@ -204,6 +204,118 @@ async function api(path, options = {}) {
     document.getElementById('hd-vital-sleep-pulse').textContent = vitals.sleepRestingPulse ?? '—';
   }
 
+  // Reference ranges as configured on each property in the Notion "Labor" database
+  // (baked in here since a Notion database *query* only returns property values, not
+  // the column's configured description/reference-range text). LDH is intentionally
+  // left unflagged — its own Notion description notes two conflicting reference
+  // ranges depending on which lab produced the result.
+  const LAB_GROUPS = [
+    { label: 'Vérkép', fields: ['WBC', 'RBC', 'Hemoglobin', 'Hematokrit', 'MCV', 'MCH', 'MCHC', 'RDW', 'MPV', 'Trombocitaszám', 'Neutrofil %', 'Limfocita %', 'Monocita %', 'Eozinofil %', 'Bazofil %', 'We (süllyedés)'] },
+    { label: 'Vesefunkció', fields: ['Kreatinin', 'eGFR', 'Karbamid', 'Húgysav', 'Nátrium', 'Kálium', 'Kalcium', 'Magnézium', 'Foszfát'] },
+    { label: 'Májfunkció', fields: ['GOT (AST)', 'GPT (ALT)', 'GGT', 'Alkalikus foszfatáz', 'Összbilirubin', 'Összfehérje', 'Albumin', 'LDH'] },
+    { label: 'Lipidek', fields: ['Koleszterin', 'HDL koleszterin', 'LDL koleszterin', 'Trigliceridek'] },
+    { label: 'Anyagcsere', fields: ['Glükóz', 'HbA1c IFCC', 'HbA1c NGSP'] },
+    { label: 'Gyulladás / enzimek', fields: ['CRP', 'Amiláz', 'Lipáz', 'CK'] },
+    { label: 'Egyéb', fields: ['TSH', 'PSA', 'Vas (Fe)'] }
+  ];
+  const LAB_META = {
+    'Albumin': { unit: 'g/L', min: 35.0, max: 52.0 },
+    'Alkalikus foszfatáz': { unit: 'U/L', min: 40, max: 129 },
+    'Amiláz': { unit: 'U/L', min: 28, max: 100 },
+    'Bazofil %': { unit: '%', min: 0.0, max: 1.0 },
+    'CK': { unit: 'U/L', max: 172 },
+    'CRP': { unit: 'mg/L', max: 5.0 },
+    'Eozinofil %': { unit: '%', min: 1.0, max: 4.0 },
+    'Foszfát': { unit: 'mmol/L', min: 0.81, max: 1.45 },
+    'GGT': { unit: 'U/L', max: 60 },
+    'GOT (AST)': { unit: 'U/L', max: 50 },
+    'GPT (ALT)': { unit: 'U/L', max: 50 },
+    'Glükóz': { unit: 'mmol/L', min: 3.7, max: 6.0, note: 'éhgyomri' },
+    'HDL koleszterin': { unit: 'mmol/L', min: 1.04 },
+    'HbA1c IFCC': { unit: 'mmol/mol', min: 20.0, max: 39.0 },
+    'HbA1c NGSP': { unit: '%', min: 4.0, max: 5.6 },
+    'Hematokrit': { unit: 'L/L', min: 0.40, max: 0.52 },
+    'Hemoglobin': { unit: 'g/L', min: 135, max: 175 },
+    'Húgysav': { unit: 'umol/L', min: 202, max: 428 },
+    'Kalcium': { unit: 'mmol/L', min: 2.15, max: 2.65 },
+    'Karbamid': { unit: 'mmol/L', min: 2.1, max: 7.2 },
+    'Koleszterin': { unit: 'mmol/L', max: 5.2 },
+    'Kreatinin': { unit: 'umol/L', min: 62, max: 106 },
+    'Kálium': { unit: 'mmol/L', min: 3.5, max: 5.1 },
+    'LDH': { unit: 'U/L', note: 'referencia labortól függ' },
+    'LDL koleszterin': { unit: 'mmol/L', max: 3.34 },
+    'Limfocita %': { unit: '%', min: 25.0, max: 40.0 },
+    'Lipáz': { unit: 'U/L', max: 67 },
+    'MCH': { unit: 'pg', min: 28, max: 33 },
+    'MCHC': { unit: 'g/L', min: 310, max: 365 },
+    'MCV': { unit: 'fL', min: 80, max: 96 },
+    'MPV': { unit: 'fL', min: 7.2, max: 13.0 },
+    'Magnézium': { unit: 'mmol/L', min: 0.73, max: 1.06 },
+    'Monocita %': { unit: '%', min: 2.0, max: 8.0 },
+    'Neutrofil %': { unit: '%', min: 50.0, max: 70.0 },
+    'Nátrium': { unit: 'mmol/L', min: 136, max: 146 },
+    'PSA': { unit: 'ug/L', max: 4.0 },
+    'RBC': { unit: 'T/L', min: 4.5, max: 5.9 },
+    'RDW': { unit: '%', min: 11.6, max: 15.6 },
+    'TSH': { unit: 'mIU/L', min: 0.550, max: 4.780 },
+    'Trigliceridek': { unit: 'mmol/L', max: 1.71 },
+    'Trombocitaszám': { unit: 'G/L', min: 150, max: 450 },
+    'Vas (Fe)': { unit: 'umol/L', min: 12.5, max: 32.2 },
+    'WBC': { unit: 'G/L', min: 4.4, max: 11.3 },
+    'We (süllyedés)': { unit: 'mm/h', min: 2, max: 10 },
+    'eGFR': { unit: 'mL/min/1.73m2', min: 90 },
+    'Összbilirubin': { unit: 'umol/L', min: 5.0, max: 21.0 },
+    'Összfehérje': { unit: 'g/L', min: 66.0, max: 87.0 }
+  };
+
+  // /api/labor/recent returns one entry per lab visit (ascending), each carrying only
+  // the markers that particular panel actually tested. Take the most recent non-null
+  // reading per marker, remembering which date it came from.
+  function latestPerLabField(rows) {
+    const latest = {};
+    for (let i = rows.length - 1; i >= 0; i--) {
+      const row = rows[i];
+      Object.keys(row).forEach((key) => {
+        if (key === 'date' || key === 'source') return;
+        if (!(key in latest) && row[key] != null) {
+          latest[key] = { value: row[key], date: row.date };
+        }
+      });
+    }
+    return latest;
+  }
+
+  function renderLabor(rows) {
+    const wrap = document.getElementById('hd-labor-groups');
+    wrap.innerHTML = '';
+    const latest = latestPerLabField(rows || []);
+    let any = false;
+    LAB_GROUPS.forEach((group) => {
+      const rowsHtml = group.fields
+        .filter((f) => latest[f])
+        .map((f) => {
+          const meta = LAB_META[f] || {};
+          const entry = latest[f];
+          const out = (meta.min != null && entry.value < meta.min) || (meta.max != null && entry.value > meta.max);
+          const rangeText = meta.min != null && meta.max != null ? meta.min + '–' + meta.max + (meta.unit ? ' ' + meta.unit : '')
+            : meta.max != null ? '<' + meta.max + (meta.unit ? ' ' + meta.unit : '')
+            : meta.min != null ? '>' + meta.min + (meta.unit ? ' ' + meta.unit : '')
+            : (meta.note || '');
+          return '<div class="hd-lab-row">' +
+            '<div class="hd-lab-top"><span class="hd-lab-name">' + f + '</span>' +
+            '<span class="hd-lab-val' + (out ? ' out' : '') + '">' + entry.value + (meta.unit ? ' ' + meta.unit : '') + '</span></div>' +
+            '<div class="hd-lab-bottom"><span>' + rangeText + '</span><span>' + entry.date + '</span></div>' +
+            '</div>';
+        }).join('');
+      if (!rowsHtml) return;
+      any = true;
+      wrap.insertAdjacentHTML('beforeend', '<p class="hd-section-title">' + group.label + '</p><div class="hd-card">' + rowsHtml + '</div>');
+    });
+    if (!any) {
+      wrap.innerHTML = '<p style="font-size:13px; opacity:.55;">Nincs laboreredmény.</p>';
+    }
+  }
+
   function renderActivityChart(activities) {
     const labels = activities.map((a) => a.date);
     const km = activities.map((a) => a.km);
@@ -283,16 +395,18 @@ async function api(path, options = {}) {
 
   async function main() {
     try {
-      const [vitals, meals, activities, checklist] = await Promise.all([
+      const [vitals, meals, activities, checklist, labor] = await Promise.all([
         api('/api/vitals/today'),
         api('/api/meals/today'),
         api('/api/activity/recent'),
-        api('/api/checklist/today')
+        api('/api/checklist/today'),
+        api('/api/labor/recent?limit=100')
       ]);
 
       renderVitals(vitals);
       renderMeals(meals);
       renderActivityChart(activities);
+      renderLabor(labor);
 
       renderChecklistRow(document.getElementById('hd-nw-list'), ['Nordic walking'], checklist, async (field, val) => {
         await api('/api/checklist/today', { method: 'POST', body: JSON.stringify({ [field]: val }) });
