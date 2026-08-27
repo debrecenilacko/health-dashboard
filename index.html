@@ -59,6 +59,15 @@
   .hd-checklist label.done { text-decoration: line-through; opacity: .5; }
   .hd-add-row { display: flex; gap: 6px; margin-top: 10px; }
   .hd-add-row input { flex: 1; font-family: 'IBM Plex Mono', monospace; font-size: 13px; padding: 7px 9px; border-radius: 6px; border: 1px solid var(--line); background: var(--paper); color: var(--ink); }
+  .hd-add-meal { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px; margin-top: 10px; }
+  .hd-add-meal-row { display: flex; gap: 6px; margin-bottom: 6px; }
+  .hd-add-meal-row:last-of-type { margin-bottom: 0; }
+  .hd-add-meal input, .hd-add-meal select { flex: 1; min-width: 0; font-family: 'IBM Plex Mono', monospace; font-size: 13px; padding: 7px 9px; border-radius: 6px; border: 1px solid var(--line); background: var(--paper); color: var(--ink); }
+  .hd-protein-goal { margin-top: 10px; }
+  .hd-protein-goal-bar { height: 8px; border-radius: 4px; background: var(--line); overflow: hidden; }
+  .hd-protein-goal-fill { height: 100%; background: var(--sage); border-radius: 4px; transition: width .3s ease; }
+  .hd-protein-goal-fill.over { background: var(--gold); }
+  .hd-protein-goal-label { font-size: 12px; opacity: .6; margin: 4px 0 0; }
   .hd-btn { background: var(--ink); color: var(--paper); border: none; border-radius: 6px; padding: 7px 14px; font-size: 13px; font-weight: 600; cursor: pointer; }
   .hd-btn.ghost { background: transparent; color: var(--alert); border: 1px solid var(--line); padding: 4px 8px; font-weight: 400; font-size: 12px; }
   .hd-section-title { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; opacity: .6; margin: 18px 0 8px; }
@@ -72,6 +81,13 @@
   .hd-glass { width: 40px; height: 40px; border-radius: 8px; border: 1.5px solid var(--line); background: var(--card); display: flex; align-items: center; justify-content: center; font-family: 'IBM Plex Mono', monospace; font-size: 12px; cursor: pointer; color: var(--ink); opacity: .6; }
   .hd-glass.filled { background: var(--gold); border-color: var(--gold); opacity: 1; color: var(--ink); font-weight: 600; }
   .hd-water-summary { font-family: 'IBM Plex Mono', monospace; font-size: 13px; margin-top: 10px; opacity: .75; }
+  .hd-sleep-debt { font-family: 'IBM Plex Mono', monospace; font-size: 13px; margin-top: 10px; opacity: .75; }
+  .hd-consist-row { padding: 8px 4px; border-bottom: 1px solid var(--line); }
+  .hd-consist-row:last-child { border-bottom: none; }
+  .hd-consist-top { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 4px; }
+  .hd-consist-count { font-family: 'IBM Plex Mono', monospace; opacity: .65; }
+  .hd-consist-bar { height: 5px; border-radius: 3px; background: var(--line); overflow: hidden; }
+  .hd-consist-fill { height: 100%; background: var(--sage); border-radius: 3px; }
   .hd-banner { background: #FFF7E0; border: 1px solid var(--gold); border-radius: 8px; padding: 10px 12px; font-size: 12px; margin-bottom: 16px; }
   .hd-topbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
   .hd-topbar .hd-date { margin-bottom: 0; }
@@ -144,12 +160,20 @@
       <div class="hd-card hd-tap-card" data-vfield="sleepRestingPulse"><p class="hd-stat-label">Nyugalmi pulzus</p><p class="hd-stat-value"><span id="hd-vital-sleep-pulse">—</span> <span style="font-size:12px;opacity:.6">/perc</span></p></div>
     </div>
     <div id="hd-sleep-chart" style="display:none;"></div>
+    <p class="hd-sleep-debt" id="hd-sleep-debt"></p>
     <p style="font-size:12px; opacity:.55; margin-top:8px;">Koppints egy kártyára a trendhez.</p>
 
     <p style="font-size:12px; opacity:.55; margin-top:12px;">Élő adat a Notion "Mérések" táblából (legutóbbi ismert érték mezőnként).</p>
   </div>
 
   <div class="hd-panel" data-panel="activity">
+    <p class="hd-section-title">Mozgás ezen a héten</p>
+    <div class="hd-grid">
+      <div class="hd-card"><p class="hd-stat-label">Percek (7 nap)</p><p class="hd-stat-value"><span id="hd-move-minutes">—</span> <span style="font-size:12px;opacity:.6">perc</span></p></div>
+      <div class="hd-card"><p class="hd-stat-label">Táv (7 nap)</p><p class="hd-stat-value"><span id="hd-move-km">—</span> <span style="font-size:12px;opacity:.6">km</span></p></div>
+    </div>
+    <p style="font-size:12px; opacity:.55; margin-top:6px;" id="hd-move-note"></p>
+
     <p class="hd-section-title">Táv aktivitásonként (Strava → Notion)</p>
     <div style="position: relative; width: 100%; height: 200px;">
       <canvas id="activityChart"></canvas>
@@ -170,6 +194,25 @@
     <p class="hd-section-title">Ma megevett étkezések</p>
     <div id="hd-meals-list"></div>
 
+    <div class="hd-add-meal">
+      <div class="hd-add-meal-row">
+        <select id="hd-meal-type">
+          <option value="Reggeli">Reggeli</option>
+          <option value="Ebéd">Ebéd</option>
+          <option value="Vacsora">Vacsora</option>
+          <option value="Snack">Snack</option>
+        </select>
+        <input type="text" id="hd-meal-desc" placeholder="Mit ettél?" />
+      </div>
+      <div class="hd-add-meal-row">
+        <input type="number" id="hd-meal-cal" placeholder="kcal" />
+        <input type="number" id="hd-meal-protein" placeholder="Fehérje g" />
+        <input type="number" id="hd-meal-carbs" placeholder="Szénhidrát g" />
+        <input type="number" id="hd-meal-fat" placeholder="Zsír g" />
+      </div>
+      <button class="hd-btn" id="hd-meal-add" style="margin-top:6px;">Étkezés hozzáadása</button>
+    </div>
+
     <p class="hd-section-title">Napi összesen</p>
     <div class="hd-grid">
       <div class="hd-card"><p class="hd-stat-label">Kalória</p><p class="hd-stat-value"><span id="hd-nutri-cal">0</span></p></div>
@@ -177,10 +220,21 @@
       <div class="hd-card"><p class="hd-stat-label">Szénhidrát</p><p class="hd-stat-value"><span id="hd-nutri-carbs">0</span>g</p></div>
       <div class="hd-card"><p class="hd-stat-label">Zsír</p><p class="hd-stat-value"><span id="hd-nutri-fat">0</span>g</p></div>
     </div>
+    <div class="hd-protein-goal">
+      <div class="hd-protein-goal-bar"><div class="hd-protein-goal-fill" id="hd-protein-fill"></div></div>
+      <p class="hd-protein-goal-label" id="hd-protein-label"></p>
+    </div>
 
     <p class="hd-section-title">Víz (250 ml / pohár, cél: 11 pohár ≈ 2750 ml)</p>
     <div class="hd-glass-row" id="hd-water-row"></div>
     <p class="hd-water-summary" id="hd-water-summary"></p>
+
+    <p class="hd-section-title">Emésztési tünetek (dumping stb.)</p>
+    <ul class="hd-checklist" id="hd-symptom-list"></ul>
+    <div class="hd-add-row">
+      <input type="text" id="hd-symptom-input" placeholder="pl. hasi görcs ebéd után 30 perccel" />
+      <button class="hd-btn" id="hd-symptom-add">Hozzáad</button>
+    </div>
   </div>
 
   <div class="hd-panel" data-panel="meds">
@@ -194,6 +248,9 @@
     <ul class="hd-checklist" id="hd-med-supp"></ul>
     <p class="hd-section-title">Rutinok</p>
     <ul class="hd-checklist" id="hd-med-routine"></ul>
+
+    <p class="hd-section-title">Konzisztencia (utóbbi 30 nap)</p>
+    <div class="hd-card" id="hd-consistency-list"></div>
   </div>
 
   <div class="hd-panel" data-panel="labor">
@@ -237,6 +294,6 @@
 <!-- Bump ?v= on every deploy that touches app.js, so a stale cached index.html
      can never load a mismatched app.js (and vice versa) — this is what caused
      the "getElementById(...) is null" error after the sleep-section update. -->
-<script src="app.js?v=6"></script>
+<script src="app.js?v=7"></script>
 </body>
 </html>

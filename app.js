@@ -227,6 +227,34 @@ function showSurgeryModal(plan) {
     });
   }
 
+  // Adherence over the last N days per checklist field, sorted worst-first
+  // so the things most worth attention surface at the top. `history` is
+  // /api/checklist/recent's array (one entry per day that has a Notion row —
+  // days with no row at all just don't count toward the denominator, since
+  // "never logged" and "logged but unchecked" aren't the same signal).
+  function renderConsistency(history) {
+    const wrap = document.getElementById('hd-consistency-list');
+    wrap.innerHTML = '';
+    if (!history || !history.length) {
+      wrap.innerHTML = '<p style="font-size:13px; opacity:.55;">Nincs elég adat.</p>';
+      return;
+    }
+    const total = history.length;
+    const rows = Object.keys(MED_LABELS).map((field) => {
+      const count = history.filter((h) => h[field]).length;
+      return { label: DISPLAY_NAME[field] || field, count, pct: Math.round((count / total) * 100) };
+    }).sort((a, b) => a.pct - b.pct);
+
+    rows.forEach((r) => {
+      const row = document.createElement('div');
+      row.className = 'hd-consist-row';
+      row.innerHTML =
+        '<div class="hd-consist-top"><span>' + r.label + '</span><span class="hd-consist-count">' + r.count + '/' + total + '</span></div>' +
+        '<div class="hd-consist-bar"><div class="hd-consist-fill" style="width:' + r.pct + '%;"></div></div>';
+      wrap.appendChild(row);
+    });
+  }
+
   function renderMeals(meals) {
     const wrap = document.getElementById('hd-meals-list');
     wrap.innerHTML = '';
@@ -254,6 +282,20 @@ function showSurgeryModal(plan) {
     document.getElementById('hd-nutri-protein').textContent = totals.protein;
     document.getElementById('hd-nutri-carbs').textContent = totals.carbs;
     document.getElementById('hd-nutri-fat').textContent = totals.fat;
+    renderProteinGoal(totals.protein);
+  }
+
+  // General bariatric pre-/post-op protein guideline (60-100g/day is the
+  // commonly cited range) — an approximate target to work toward, not a
+  // personalized prescription; the label says so explicitly.
+  const PROTEIN_GOAL_G = 80;
+  function renderProteinGoal(proteinG) {
+    const fill = document.getElementById('hd-protein-fill');
+    const label = document.getElementById('hd-protein-label');
+    const pct = Math.min(100, Math.round((proteinG / PROTEIN_GOAL_G) * 100));
+    fill.style.width = pct + '%';
+    fill.classList.toggle('over', proteinG >= PROTEIN_GOAL_G);
+    label.textContent = proteinG + 'g / ' + PROTEIN_GOAL_G + 'g fehérje cél (általános irányszám, egyeztesd a dietetikusoddal)';
   }
 
   function renderVitals(vitals) {
@@ -266,6 +308,21 @@ function showSurgeryModal(plan) {
     document.getElementById('hd-vital-sleep-deep').textContent = vitals.sleepDeepMin ?? '—';
     document.getElementById('hd-vital-sleep-rem').textContent = vitals.sleepRemMin ?? '—';
     document.getElementById('hd-vital-sleep-pulse').textContent = vitals.sleepRestingPulse ?? '—';
+  }
+
+  const SLEEP_GOAL_HOURS = 8;
+  function renderSleepDebt(history) {
+    const el = document.getElementById('hd-sleep-debt');
+    const recent = (history || []).filter((r) => r.sleepHours != null).slice(-7);
+    if (!recent.length) { el.textContent = ''; return; }
+    const avg = recent.reduce((sum, r) => sum + r.sleepHours, 0) / recent.length;
+    const diff = (avg - SLEEP_GOAL_HOURS) * recent.length;
+    const avgStr = Math.round(avg * 10) / 10;
+    if (diff < -0.5) {
+      el.textContent = 'Alvásadósság (' + recent.length + ' mérés, átlag ' + avgStr + ' óra/éjszaka): kb. ' + Math.round(Math.abs(diff) * 10) / 10 + ' óra hiány a ' + SLEEP_GOAL_HOURS + ' órás célhoz képest.';
+    } else {
+      el.textContent = 'Átlag ' + avgStr + ' óra/éjszaka az utóbbi ' + recent.length + ' mérésen — a ' + SLEEP_GOAL_HOURS + ' órás cél körül vagy felette.';
+    }
   }
 
   // Vitals/sleep cards share one chart area per grid (hd-vitals-chart /
@@ -561,6 +618,27 @@ function showSurgeryModal(plan) {
     toggleTrendChart(chartWrap, laborChartInstances, field, [{ label: field, points }], refLines);
   }
 
+  // General movement guideline (~150 min/week moderate activity is the
+  // common WHO/Attia-cited baseline) — shown as context, not a personalized
+  // prescription.
+  const WEEKLY_MOVEMENT_TARGET_MIN = 150;
+  function renderMovementRollup(activities) {
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - 7);
+    const cutoffKey = cutoff.toISOString().slice(0, 10);
+    const recent = (activities || []).filter((a) => a.date >= cutoffKey);
+    const minutes = recent.reduce((sum, a) => sum + (a.minutes || 0), 0);
+    const km = recent.reduce((sum, a) => sum + (a.km || 0), 0);
+    document.getElementById('hd-move-minutes').textContent = minutes;
+    document.getElementById('hd-move-km').textContent = Math.round(km * 10) / 10;
+    const note = document.getElementById('hd-move-note');
+    if (minutes >= WEEKLY_MOVEMENT_TARGET_MIN) {
+      note.textContent = 'A ~' + WEEKLY_MOVEMENT_TARGET_MIN + ' perces heti irányszám (WHO/Attia-féle általános ajánlás) teljesítve.';
+    } else {
+      note.textContent = 'Általános irányszám ~' + WEEKLY_MOVEMENT_TARGET_MIN + ' perc/hét — még ' + (WEEKLY_MOVEMENT_TARGET_MIN - minutes) + ' perc hiányzik.';
+    }
+  }
+
   function renderActivityChart(activities) {
     const labels = activities.map((a) => a.date);
     const km = activities.map((a) => a.km);
@@ -603,9 +681,11 @@ function showSurgeryModal(plan) {
     redraw();
   }
 
-  function renderExercises(exercisesStr, onSave) {
-    const items = (exercisesStr || '').split('\n').filter(Boolean);
-    const ul = document.getElementById('hd-ex-list');
+  // Shared by the exercises list and the digestive-symptoms log — both are
+  // "newline-joined free-text items, one Notion rich_text field" lists.
+  function renderTextList(listId, inputId, addBtnId, str, onSave) {
+    const items = (str || '').split('\n').filter(Boolean);
+    const ul = document.getElementById(listId);
 
     function redraw() {
       ul.innerHTML = '';
@@ -627,8 +707,8 @@ function showSurgeryModal(plan) {
     }
     redraw();
 
-    document.getElementById('hd-ex-add').onclick = async () => {
-      const input = document.getElementById('hd-ex-input');
+    document.getElementById(addBtnId).onclick = async () => {
+      const input = document.getElementById(inputId);
       const val = input.value.trim();
       if (!val) return;
       items.push(val);
@@ -640,7 +720,7 @@ function showSurgeryModal(plan) {
 
   async function main() {
     try {
-      const [vitals, meals, activities, checklist, labor, coachNotes, surgeryPlan, vitalsRecent] = await Promise.all([
+      const [vitals, meals, activities, checklist, labor, coachNotes, surgeryPlan, vitalsRecent, checklistRecent] = await Promise.all([
         api('/api/vitals/today'),
         api('/api/meals/today'),
         api('/api/activity/recent'),
@@ -648,14 +728,18 @@ function showSurgeryModal(plan) {
         api('/api/labor/recent?limit=100'),
         api('/api/coach-notes'),
         api('/api/surgery-plan'),
-        api('/api/vitals/recent?limit=100')
+        api('/api/vitals/recent?limit=100'),
+        api('/api/checklist/recent?days=30')
       ]);
 
       vitalsHistory = vitalsRecent;
       root.classList.remove('loading');
       renderVitals(vitals);
+      renderSleepDebt(vitalsHistory);
       renderMeals(meals);
       renderActivityChart(activities);
+      renderMovementRollup(activities);
+      renderConsistency(checklistRecent);
       renderLabor(labor);
       renderCoachNotes(coachNotes);
       renderSurgeryWarning(surgeryPlan, checklist);
@@ -679,9 +763,28 @@ function showSurgeryModal(plan) {
         await api('/api/checklist/today', { method: 'POST', body: JSON.stringify({ water: n }) });
       });
 
-      renderExercises(checklist.exercises, async (str) => {
+      renderTextList('hd-ex-list', 'hd-ex-input', 'hd-ex-add', checklist.exercises, async (str) => {
         await api('/api/checklist/today', { method: 'POST', body: JSON.stringify({ exercises: str }) });
       });
+
+      renderTextList('hd-symptom-list', 'hd-symptom-input', 'hd-symptom-add', checklist.symptoms, async (str) => {
+        await api('/api/checklist/today', { method: 'POST', body: JSON.stringify({ symptoms: str }) });
+      });
+
+      document.getElementById('hd-meal-add').onclick = async () => {
+        const type = document.getElementById('hd-meal-type').value;
+        const desc = document.getElementById('hd-meal-desc').value.trim();
+        const num = (id) => {
+          const v = document.getElementById(id).value;
+          return v === '' ? undefined : Number(v);
+        };
+        await api('/api/meals/log', {
+          method: 'POST',
+          body: JSON.stringify({ type, desc, calories: num('hd-meal-cal'), protein: num('hd-meal-protein'), carbs: num('hd-meal-carbs'), fat: num('hd-meal-fat') })
+        });
+        ['hd-meal-desc', 'hd-meal-cal', 'hd-meal-protein', 'hd-meal-carbs', 'hd-meal-fat'].forEach((id) => { document.getElementById(id).value = ''; });
+        renderMeals(await api('/api/meals/today'));
+      };
     } catch (err) {
       root.classList.remove('loading');
       if (err.isAuthError) {

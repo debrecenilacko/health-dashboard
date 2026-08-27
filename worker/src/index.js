@@ -197,6 +197,26 @@ async function getMealsToday(env) {
   });
 }
 
+async function postMealLog(env, body) {
+  const type = typeof body.type === 'string' && body.type ? body.type : 'Snack';
+  const desc = typeof body.desc === 'string' ? body.desc : '';
+  const properties = {
+    Name: { title: [{ text: { content: desc || type } }] },
+    'Dátum': { date: { start: todayISO() } },
+    'Típus': { select: { name: type } },
+    'Leírás': { rich_text: [{ text: { content: desc } }] }
+  };
+  if (typeof body.calories === 'number') properties['Kalória'] = { number: body.calories };
+  if (typeof body.protein === 'number') properties['Fehérje (g)'] = { number: body.protein };
+  if (typeof body.carbs === 'number') properties['Szénhidrát (g)'] = { number: body.carbs };
+  if (typeof body.fat === 'number') properties['Zsír (g)'] = { number: body.fat };
+  const row = await notion(env, '/pages', {
+    method: 'POST',
+    body: JSON.stringify({ parent: { database_id: env.DB_ETKEZESEK }, properties })
+  });
+  return { ok: true, id: row.id };
+}
+
 async function getActivityRecent(env) {
   const data = await notion(env, `/databases/${env.DB_AKTIVITAS}/query`, {
     method: 'POST',
@@ -250,7 +270,10 @@ const CHECKLIST_CHECKBOX_FIELDS = [
 
 function checklistPageToJson(row) {
   const p = row.properties;
-  const out = { date: date(p['Dátum']), water: num(p['Víz (pohár, 250ml)']) || 0, exercises: text(p['Gyakorlatok']) };
+  const out = {
+    date: date(p['Dátum']), water: num(p['Víz (pohár, 250ml)']) || 0,
+    exercises: text(p['Gyakorlatok']), symptoms: text(p['Emésztési tünetek'])
+  };
   CHECKLIST_CHECKBOX_FIELDS.forEach((f) => {
     out[f] = checkbox(p[f]);
   });
@@ -260,7 +283,7 @@ function checklistPageToJson(row) {
 async function getChecklistToday(env) {
   const row = await findChecklistPageToday(env);
   if (!row) {
-    const out = { date: todayISO(), water: 0, exercises: '' };
+    const out = { date: todayISO(), water: 0, exercises: '', symptoms: '' };
     CHECKLIST_CHECKBOX_FIELDS.forEach((f) => (out[f] = false));
     return out;
   }
@@ -280,6 +303,7 @@ async function postChecklistToday(env, body) {
   const properties = {};
   if (typeof body.water === 'number') properties['Víz (pohár, 250ml)'] = { number: body.water };
   if (typeof body.exercises === 'string') properties['Gyakorlatok'] = { rich_text: [{ text: { content: body.exercises } }] };
+  if (typeof body.symptoms === 'string') properties['Emésztési tünetek'] = { rich_text: [{ text: { content: body.symptoms } }] };
   CHECKLIST_CHECKBOX_FIELDS.forEach((f) => {
     if (typeof body[f] === 'boolean') properties[f] = { checkbox: body[f] };
   });
@@ -523,6 +547,10 @@ export default {
       }
       if (url.pathname === '/api/meals/today' && request.method === 'GET') {
         return json(await getMealsToday(env));
+      }
+      if (url.pathname === '/api/meals/log' && request.method === 'POST') {
+        const body = await request.json();
+        return json(await postMealLog(env, body));
       }
       if (url.pathname === '/api/activity/recent' && request.method === 'GET') {
         return json(await getActivityRecent(env));
