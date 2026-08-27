@@ -62,13 +62,16 @@
   .hd-modal input { width: 100%; font-family: 'IBM Plex Mono', monospace; font-size: 13px; padding: 8px 9px; border-radius: 6px; border: 1px solid var(--line); background: var(--paper); color: var(--ink); }
   .hd-modal-error { color: var(--alert); font-size: 12px; margin: 10px 0 0; min-height: 14px; }
   .hd-modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
-  .hd-lab-row { padding: 8px 4px; border-bottom: 1px solid var(--line); }
-  .hd-lab-row:last-child { border-bottom: none; }
+  .hd-lab-item:last-child .hd-lab-row { border-bottom: none; }
+  .hd-lab-row { padding: 8px 4px; border-bottom: 1px solid var(--line); cursor: pointer; }
+  .hd-lab-row:active { background: var(--paper); }
   .hd-lab-top { display: flex; justify-content: space-between; align-items: baseline; font-size: 14px; gap: 8px; }
   .hd-lab-name { flex: 1; }
   .hd-lab-val { font-family: 'IBM Plex Mono', monospace; font-weight: 600; white-space: nowrap; }
   .hd-lab-val.out { color: var(--alert); }
   .hd-lab-bottom { display: flex; justify-content: space-between; font-size: 11px; opacity: .5; font-family: 'IBM Plex Mono', monospace; margin-top: 2px; gap: 8px; }
+  .hd-lab-chart-wrap { padding: 4px 4px 10px; border-bottom: 1px solid var(--line); }
+  .hd-lab-item:last-child .hd-lab-chart-wrap { border-bottom: none; }
 </style>
 </head>
 <body>
@@ -151,7 +154,7 @@
 
   <div class="hd-panel" data-panel="labor">
     <div id="hd-labor-groups"></div>
-    <p style="font-size:12px; opacity:.55; margin-top:12px;">Minden marker a legutóbbi ismert értékét mutatja — a dátum jelzi, mikor mérték. Piros = a Notionban tárolt referenciatartományon kívül.</p>
+    <p style="font-size:12px; opacity:.55; margin-top:12px;">Minden marker a legutóbbi ismert értékét mutatja — a dátum jelzi, mikor mérték. Piros = a Notionban tárolt referenciatartományon kívül. Koppints egy markerre a teljes trendhez.</p>
   </div>
 </div>
 
@@ -174,6 +177,6 @@
 <!-- Bump ?v= on every deploy that touches app.js, so a stale cached index.html
      can never load a mismatched app.js (and vice versa) — this is what caused
      the "getElementById(...) is null" error after the sleep-section update. -->
-<script src="app.js?v=3"></script>
+<script src="app.js?v=4"></script>
 </body>
 </html>

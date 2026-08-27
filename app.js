@@ -285,10 +285,18 @@ async function api(path, options = {}) {
     return latest;
   }
 
+  // Full ascending history, kept around so a tapped row can chart every reading
+  // it ever had (not just the latest), and the Chart.js instances currently
+  // shown, so a second tap can destroy the old canvas before removing it.
+  let laborHistory = [];
+  const laborChartInstances = {};
+
   function renderLabor(rows) {
+    laborHistory = rows || [];
     const wrap = document.getElementById('hd-labor-groups');
     wrap.innerHTML = '';
-    const latest = latestPerLabField(rows || []);
+    Object.keys(laborChartInstances).forEach((k) => delete laborChartInstances[k]);
+    const latest = latestPerLabField(laborHistory);
     let any = false;
     LAB_GROUPS.forEach((group) => {
       const rowsHtml = group.fields
@@ -301,10 +309,13 @@ async function api(path, options = {}) {
             : meta.max != null ? '<' + meta.max + (meta.unit ? ' ' + meta.unit : '')
             : meta.min != null ? '>' + meta.min + (meta.unit ? ' ' + meta.unit : '')
             : (meta.note || '');
-          return '<div class="hd-lab-row">' +
+          return '<div class="hd-lab-item">' +
+            '<div class="hd-lab-row" data-field="' + f + '">' +
             '<div class="hd-lab-top"><span class="hd-lab-name">' + f + '</span>' +
             '<span class="hd-lab-val' + (out ? ' out' : '') + '">' + entry.value + (meta.unit ? ' ' + meta.unit : '') + '</span></div>' +
             '<div class="hd-lab-bottom"><span>' + rangeText + '</span><span>' + entry.date + '</span></div>' +
+            '</div>' +
+            '<div class="hd-lab-chart-wrap" style="display:none;"></div>' +
             '</div>';
         }).join('');
       if (!rowsHtml) return;
@@ -313,7 +324,47 @@ async function api(path, options = {}) {
     });
     if (!any) {
       wrap.innerHTML = '<p style="font-size:13px; opacity:.55;">Nincs laboreredmény.</p>';
+      return;
     }
+    wrap.querySelectorAll('.hd-lab-row').forEach((rowEl) => {
+      rowEl.addEventListener('click', () => toggleLaborChart(rowEl.dataset.field, rowEl.closest('.hd-lab-item')));
+    });
+  }
+
+  function toggleLaborChart(field, itemEl) {
+    const chartWrap = itemEl.querySelector('.hd-lab-chart-wrap');
+    const isOpen = chartWrap.style.display !== 'none';
+    if (laborChartInstances[field]) {
+      laborChartInstances[field].destroy();
+      delete laborChartInstances[field];
+    }
+    if (isOpen) {
+      chartWrap.style.display = 'none';
+      chartWrap.innerHTML = '';
+      return;
+    }
+    const points = laborHistory
+      .filter((row) => row[field] != null)
+      .map((row) => ({ date: row.date, value: row[field] }));
+    const meta = LAB_META[field] || {};
+    chartWrap.style.display = 'block';
+    chartWrap.innerHTML = '<div style="position:relative; width:100%; height:160px;"><canvas></canvas></div>';
+    const datasets = [{ label: field, data: points.map((p) => p.value), borderColor: '#1B3A4B', backgroundColor: '#1B3A4B', tension: 0.15, pointRadius: 3, borderWidth: 2 }];
+    if (meta.min != null) datasets.push({ label: 'min', data: points.map(() => meta.min), borderColor: '#7A9E8E', borderDash: [4, 4], pointRadius: 0, borderWidth: 1 });
+    if (meta.max != null) datasets.push({ label: 'max', data: points.map(() => meta.max), borderColor: '#C1666B', borderDash: [4, 4], pointRadius: 0, borderWidth: 1 });
+    laborChartInstances[field] = new Chart(chartWrap.querySelector('canvas'), {
+      type: 'line',
+      data: { labels: points.map((p) => p.date), datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          y: { grid: { color: '#e1e0d9' } },
+          x: { grid: { display: false }, ticks: { autoSkip: true, maxRotation: 45, font: { size: 9 } } }
+        }
+      }
+    });
   }
 
   function renderActivityChart(activities) {
