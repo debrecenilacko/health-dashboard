@@ -13,15 +13,73 @@ function saveConfig(cfg) {
   localStorage.setItem(CONFIG_KEY, JSON.stringify(cfg));
 }
 
+// Shows the backend-settings modal and resolves once the user saves (true)
+// or cancels (false). The token field is always left blank on open — it's
+// never re-displayed once saved, since there's no way to read it back out
+// of a Cloudflare secret either.
+function showSettingsModal({ apiBase = '', errorMessage = '', allowCancel = true } = {}) {
+  const overlay = document.getElementById('hd-settings-overlay');
+  const apiInput = document.getElementById('hd-cfg-apibase');
+  const tokenInput = document.getElementById('hd-cfg-token');
+  const errorEl = document.getElementById('hd-cfg-error');
+  const saveBtn = document.getElementById('hd-cfg-save');
+  const cancelBtn = document.getElementById('hd-cfg-cancel');
+
+  apiInput.value = apiBase;
+  tokenInput.value = '';
+  errorEl.textContent = errorMessage;
+  cancelBtn.style.display = allowCancel ? 'inline-block' : 'none';
+  overlay.style.display = 'flex';
+  tokenInput.focus();
+
+  return new Promise((resolve) => {
+    function cleanup() {
+      overlay.style.display = 'none';
+      saveBtn.removeEventListener('click', onSave);
+      cancelBtn.removeEventListener('click', onCancel);
+      apiInput.removeEventListener('keydown', onKey);
+      tokenInput.removeEventListener('keydown', onKey);
+    }
+    function onSave() {
+      const newApiBase = apiInput.value.trim().replace(/\/$/, '');
+      const newToken = tokenInput.value.trim();
+      if (!newApiBase || !newToken) {
+        errorEl.textContent = 'Add meg mindkét mezőt.';
+        return;
+      }
+      saveConfig({ apiBase: newApiBase, appToken: newToken });
+      cleanup();
+      resolve(true);
+    }
+    function onCancel() {
+      cleanup();
+      resolve(false);
+    }
+    function onKey(e) {
+      if (e.key === 'Enter') onSave();
+    }
+    saveBtn.addEventListener('click', onSave);
+    cancelBtn.addEventListener('click', onCancel);
+    apiInput.addEventListener('keydown', onKey);
+    tokenInput.addEventListener('keydown', onKey);
+  });
+}
+
+// Concurrent api() calls (Promise.all on load) must share one in-flight
+// modal instead of each popping their own.
+let pendingConfigPromise = null;
+
 async function ensureConfig() {
-  let cfg = getConfig();
-  if (!cfg.apiBase) {
-    const apiBase = prompt('Add meg a backend URL-t (pl. https://egeszseg-dashboard-api.<neved>.workers.dev):');
-    const appToken = prompt('Add meg az APP_TOKEN-t (amit a wrangler secret put APP_TOKEN-nél megadtál):');
-    cfg = { apiBase: (apiBase || '').replace(/\/$/, ''), appToken: appToken || '' };
-    saveConfig(cfg);
+  const cfg = getConfig();
+  if (cfg.apiBase && cfg.appToken) return cfg;
+  if (!pendingConfigPromise) {
+    pendingConfigPromise = showSettingsModal({ apiBase: cfg.apiBase, allowCancel: false })
+      .then(() => {
+        pendingConfigPromise = null;
+        return getConfig();
+      });
   }
-  return cfg;
+  return pendingConfigPromise;
 }
 
 async function api(path, options = {}) {
@@ -34,6 +92,11 @@ async function api(path, options = {}) {
       ...(options.headers || {})
     }
   });
+  if (res.status === 401) {
+    const err = new Error('API hiba: 401');
+    err.isAuthError = true;
+    throw err;
+  }
   if (!res.ok) throw new Error('API hiba: ' + res.status);
   return res.json();
 }
@@ -43,6 +106,13 @@ async function api(path, options = {}) {
   document.getElementById('hd-date').textContent = todayKey;
 
   const root = document.getElementById('hd-root');
+
+  document.getElementById('hd-settings-btn').addEventListener('click', async () => {
+    const cfg = getConfig();
+    const saved = await showSettingsModal({ apiBase: cfg.apiBase, allowCancel: true });
+    if (saved) location.reload();
+  });
+
   root.querySelectorAll('.hd-tab-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
       root.querySelectorAll('.hd-tab-btn').forEach((b) => b.classList.remove('active'));
@@ -231,9 +301,21 @@ async function api(path, options = {}) {
         await api('/api/checklist/today', { method: 'POST', body: JSON.stringify({ exercises: str }) });
       });
     } catch (err) {
+      if (err.isAuthError) {
+        const cfg = getConfig();
+        const saved = await showSettingsModal({
+          apiBase: cfg.apiBase,
+          errorMessage: 'A backend 401-et adott vissza — az APP_TOKEN nem egyezik a Cloudflare Workeren beállítottal. Add meg az érvényes tokent.',
+          allowCancel: true
+        });
+        if (saved) {
+          location.reload();
+          return;
+        }
+      }
       document.getElementById('hd-root').insertAdjacentHTML(
         'afterbegin',
-        '<div class="hd-banner" style="border-color:#C1666B;">Nem sikerült elérni a backendet: ' + err.message + '. Ellenőrizd a beállított API URL-t / tokent (töröld a böngésző localStorage "hd-config" kulcsát az újrapróbáláshoz).</div>'
+        '<div class="hd-banner" style="border-color:#C1666B;">Nem sikerült elérni a backendet: ' + err.message + '. A fogaskerék ikonnal bármikor módosíthatod az API URL-t / tokent.</div>'
       );
     }
   }
