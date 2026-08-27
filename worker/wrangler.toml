@@ -20,7 +20,8 @@ DB_LABOR = "4702e64e3353476cb2a1c63ba70a1683"
 binding = "COACH_KV"
 id = "6687f63fbd674b75b72ed3154753b2ba"
 
-# Óránként ellenőrzi, hogy változott-e a mérési/labor adat, és ha igen,
-# akkor (és csak akkor) hívja az Anthropic API-t új coach jegyzetekért.
+# Hetente egyszer (hétfő reggel) ellenőrzi, hogy változott-e a mérési/labor
+# adat, és ha igen, akkor (és csak akkor) hívja az Anthropic API-t új coach
+# jegyzetekért.
 [triggers]
-crons = ["0 * * * *"]
+crons = ["0 6 * * 1"]
