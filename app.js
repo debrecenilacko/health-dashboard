@@ -265,23 +265,35 @@ function showSurgeryModal(plan) {
     meals.forEach((m) => {
       const card = document.createElement('div');
       card.className = 'hd-meal-card';
-      card.innerHTML =
-        '<div class="hd-meal-type">' + (m.type || '') + '</div>' +
-        '<div class="hd-meal-desc">' + (m.desc || '') + '</div>' +
-        '<div class="hd-meal-macros">' + (m.calories || 0) + ' kcal · ' + (m.protein || 0) + 'g fehérje · ' + (m.carbs || 0) + 'g szénhidrát · ' + (m.fat || 0) + 'g zsír</div>';
+      const type = document.createElement('div');
+      type.className = 'hd-meal-type';
+      type.textContent = m.type || '';
+      const desc = document.createElement('div');
+      desc.className = 'hd-meal-desc';
+      desc.textContent = m.desc || '';
+      const macros = document.createElement('div');
+      macros.className = 'hd-meal-macros';
+      macros.textContent = (m.calories || 0) + ' kcal · ' + (m.protein || 0) + 'g fehérje · ' + (m.carbs || 0) + 'g szénhidrát · ' + (m.fat || 0) + 'g zsír' +
+        (m.fiber != null ? ' · ' + m.fiber + 'g rost' : '') + (m.sugar != null ? ' · ' + m.sugar + 'g cukor' : '');
+      card.appendChild(type);
+      card.appendChild(desc);
+      card.appendChild(macros);
       wrap.appendChild(card);
     });
     const totals = meals.reduce(
       (acc, m) => ({
         cal: acc.cal + (m.calories || 0), protein: acc.protein + (m.protein || 0),
-        carbs: acc.carbs + (m.carbs || 0), fat: acc.fat + (m.fat || 0)
+        carbs: acc.carbs + (m.carbs || 0), fat: acc.fat + (m.fat || 0),
+        fiber: acc.fiber + (m.fiber || 0), sugar: acc.sugar + (m.sugar || 0)
       }),
-      { cal: 0, protein: 0, carbs: 0, fat: 0 }
+      { cal: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, sugar: 0 }
     );
     document.getElementById('hd-nutri-cal').textContent = totals.cal;
     document.getElementById('hd-nutri-protein').textContent = totals.protein;
     document.getElementById('hd-nutri-carbs').textContent = totals.carbs;
     document.getElementById('hd-nutri-fat').textContent = totals.fat;
+    document.getElementById('hd-nutri-fiber').textContent = totals.fiber;
+    document.getElementById('hd-nutri-sugar').textContent = totals.sugar;
     renderProteinGoal(totals.protein);
   }
 
@@ -780,9 +792,12 @@ function showSurgeryModal(plan) {
         };
         await api('/api/meals/log', {
           method: 'POST',
-          body: JSON.stringify({ type, desc, calories: num('hd-meal-cal'), protein: num('hd-meal-protein'), carbs: num('hd-meal-carbs'), fat: num('hd-meal-fat') })
+          body: JSON.stringify({
+            type, desc, calories: num('hd-meal-cal'), protein: num('hd-meal-protein'), carbs: num('hd-meal-carbs'), fat: num('hd-meal-fat'),
+            fiber: num('hd-meal-fiber'), sugar: num('hd-meal-sugar')
+          })
         });
-        ['hd-meal-desc', 'hd-meal-cal', 'hd-meal-protein', 'hd-meal-carbs', 'hd-meal-fat'].forEach((id) => { document.getElementById(id).value = ''; });
+        ['hd-meal-desc', 'hd-meal-cal', 'hd-meal-protein', 'hd-meal-carbs', 'hd-meal-fat', 'hd-meal-fiber', 'hd-meal-sugar'].forEach((id) => { document.getElementById(id).value = ''; });
         renderMeals(await api('/api/meals/today'));
       };
     } catch (err) {

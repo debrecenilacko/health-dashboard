@@ -192,7 +192,9 @@ async function getMealsToday(env) {
       calories: num(p['Kalória']),
       protein: num(p['Fehérje (g)']),
       carbs: num(p['Szénhidrát (g)']),
-      fat: num(p['Zsír (g)'])
+      fat: num(p['Zsír (g)']),
+      fiber: num(p['Rost (g)']),
+      sugar: num(p['Cukor (g)'])
     };
   });
 }
@@ -210,6 +212,8 @@ async function postMealLog(env, body) {
   if (typeof body.protein === 'number') properties['Fehérje (g)'] = { number: body.protein };
   if (typeof body.carbs === 'number') properties['Szénhidrát (g)'] = { number: body.carbs };
   if (typeof body.fat === 'number') properties['Zsír (g)'] = { number: body.fat };
+  if (typeof body.fiber === 'number') properties['Rost (g)'] = { number: body.fiber };
+  if (typeof body.sugar === 'number') properties['Cukor (g)'] = { number: body.sugar };
   const row = await notion(env, '/pages', {
     method: 'POST',
     body: JSON.stringify({ parent: { database_id: env.DB_ETKEZESEK }, properties })

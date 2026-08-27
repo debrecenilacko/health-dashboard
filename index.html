@@ -210,6 +210,10 @@
         <input type="number" id="hd-meal-carbs" placeholder="Szénhidrát g" />
         <input type="number" id="hd-meal-fat" placeholder="Zsír g" />
       </div>
+      <div class="hd-add-meal-row">
+        <input type="number" id="hd-meal-fiber" placeholder="Rost g" />
+        <input type="number" id="hd-meal-sugar" placeholder="Cukor g" />
+      </div>
       <button class="hd-btn" id="hd-meal-add" style="margin-top:6px;">Étkezés hozzáadása</button>
     </div>
 
@@ -219,6 +223,8 @@
       <div class="hd-card"><p class="hd-stat-label">Fehérje</p><p class="hd-stat-value"><span id="hd-nutri-protein">0</span>g</p></div>
       <div class="hd-card"><p class="hd-stat-label">Szénhidrát</p><p class="hd-stat-value"><span id="hd-nutri-carbs">0</span>g</p></div>
       <div class="hd-card"><p class="hd-stat-label">Zsír</p><p class="hd-stat-value"><span id="hd-nutri-fat">0</span>g</p></div>
+      <div class="hd-card"><p class="hd-stat-label">Rost</p><p class="hd-stat-value"><span id="hd-nutri-fiber">0</span>g</p></div>
+      <div class="hd-card"><p class="hd-stat-label">Cukor</p><p class="hd-stat-value"><span id="hd-nutri-sugar">0</span>g</p></div>
     </div>
     <div class="hd-protein-goal">
       <div class="hd-protein-goal-bar"><div class="hd-protein-goal-fill" id="hd-protein-fill"></div></div>
@@ -294,6 +300,6 @@
 <!-- Bump ?v= on every deploy that touches app.js, so a stale cached index.html
      can never load a mismatched app.js (and vice versa) — this is what caused
      the "getElementById(...) is null" error after the sleep-section update. -->
-<script src="app.js?v=7"></script>
+<script src="app.js?v=8"></script>
 </body>
 </html>
