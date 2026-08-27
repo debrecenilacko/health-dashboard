@@ -439,24 +439,46 @@ async function regenerateCoachNotes(env, vitals, laborHistory, fingerprint) {
   }
 }
 
-async function getCoachNotes(env, ctx) {
+// A page load just reads whatever's cached — instant, no external calls.
+// Regeneration itself happens on a cron schedule (see `scheduled` below),
+// never inside a request: an earlier version tried to kick it off via
+// ctx.waitUntil() after the response, but Cloudflare only grants a background
+// task a short window post-response, and a multi-paragraph Opus 5 generation
+// (with adaptive thinking) doesn't reliably fit — the task got silently
+// cancelled ("waitUntil() tasks did not complete within the allowed time").
+// A cron invocation gets its own full execution budget instead.
+async function getCoachNotes(env) {
+  const [vitals, cached] = await Promise.all([getVitalsToday(env), env.COACH_KV.get(COACH_KV_KEY, 'json')]);
+  if (!cached) return { notes: null, generatedAt: null, stale: true };
+  const fingerprint = await sha256Hex(JSON.stringify({ vitals, laborHistory: await getLaborRecent(env, 100) }));
+  return { notes: cached.notes, generatedAt: cached.generatedAt, stale: cached.dataHash !== fingerprint };
+}
+
+// Runs on the cron schedule in wrangler.toml. Cheap on every tick (one Notion
+// read + one KV read) unless the data fingerprint actually changed, in which
+// case it calls the Anthropic API and writes the fresh notes to COACH_KV.
+async function checkAndRegenerateCoachNotes(env) {
   const [vitals, laborHistory] = await Promise.all([getVitalsToday(env), getLaborRecent(env, 100)]);
   const fingerprint = await sha256Hex(JSON.stringify({ vitals, laborHistory }));
   const cached = await env.COACH_KV.get(COACH_KV_KEY, 'json');
-
-  if (cached && cached.dataHash === fingerprint) {
-    return { notes: cached.notes, generatedAt: cached.generatedAt, stale: false };
-  }
-
-  // Data is new or changed — regenerate in the background and hand back
-  // whatever's cached right now so this request never blocks on the API call.
-  ctx.waitUntil(regenerateCoachNotes(env, vitals, laborHistory, fingerprint));
-  return { notes: cached ? cached.notes : null, generatedAt: cached ? cached.generatedAt : null, stale: true };
+  if (cached && cached.dataHash === fingerprint) return;
+  await regenerateCoachNotes(env, vitals, laborHistory, fingerprint);
 }
 
 // ---- Entry point ---------------------------------------------------------
 
 export default {
+  // Awaited directly (not wrapped in ctx.waitUntil) — the invocation stays
+  // alive for as long as this function hasn't returned, which is simpler and
+  // more reliable here than the fire-and-forget pattern: that returns
+  // immediately and relies on a separate, shorter post-completion grace
+  // window for the background promise, which a multi-paragraph Opus 5
+  // generation didn't reliably fit into (confirmed both on the deployed
+  // Worker and against /__scheduled in `wrangler dev --remote`).
+  async scheduled(event, env, ctx) {
+    await checkAndRegenerateCoachNotes(env);
+  },
+
   async fetch(request, env, ctx) {
     if (request.method === 'OPTIONS') return new Response(null, { headers: corsHeaders() });
     if (!checkAuth(request, env)) return unauthorized();
@@ -500,7 +522,7 @@ export default {
         return json(await postVitalsLog(env, body));
       }
       if (url.pathname === '/api/coach-notes' && request.method === 'GET') {
-        return json(await getCoachNotes(env, ctx));
+        return json(await getCoachNotes(env));
       }
       return json({ error: 'not found' }, 404);
     } catch (err) {
