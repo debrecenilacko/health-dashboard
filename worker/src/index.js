@@ -440,38 +440,35 @@ const LAB_REFERENCE_RANGES = {
 
 // Five short, tab-scoped sections instead of one long Labor-only blob — each
 // analyzes only its own domain's trend so it's readable inline on that tab.
-const COACH_SYSTEM_PROMPT = `Egy felelős wellness coach vagy — NEM orvos —, aki Peter Attia (Outlive), Andrew Huberman és Rhonda Patrick szemléletében, hosszú távú egészség- (healthspan-) és teljesítményszemlélettel elemzi a felhasználó adatait.
+// Generated as 5 independent parallel API calls (see regenerateCoachNotes)
+// rather than one call returning structured JSON: that earlier approach
+// took 100-125s sequentially and occasionally hit a 524 gateway timeout,
+// and Anthropic didn't always return parseable JSON. Parallel plain-text
+// calls are both faster (concurrent, not sequential) and simpler (no
+// parsing to get wrong).
+const COACH_BASE_PROMPT = `Egy felelős wellness coach vagy — NEM orvos —, aki Peter Attia (Outlive), Andrew Huberman és Rhonda Patrick szemléletében, hosszú távú egészség- (healthspan-) és teljesítményszemlélettel elemzi a felhasználó adatait.
 
-A bemenet öt adatterületet tartalmaz: mérési (vitals), mozgás (activity), táplálkozás (nutrition), gyógyszer/kiegészítő/rutin-betartás (meds), és labor (labor). Minden területhez írj egy KÜLÖN, RÖVID elemzést — ezek külön-külön jelennek meg az app megfelelő fülén, szóval mindegyiknek önmagában is értelmesnek kell lennie.
-
-Szabályok minden szekcióra:
+Szabályok:
 - Ne állíts fel diagnózist, és ne adj konkrét gyógyszerelési/kezelési utasítást — ami ebbe a kategóriába esik, azt jelöld úgy, hogy "ezt érdemes megbeszélni az orvosoddal".
 - Konkrét, adatra hivatkozó megfigyelés a trendről (mi javul, mi romlik, mi stagnál — számokkal), rövid MIÉRT (healthspan-szempontú mechanizmus), és egy konkrét következő lépés.
-- Ha egy terülehez nincs elég adat, mondd ki röviden ahelyett, hogy kitalálnál valamit.
-- A "labor" szekció lehet a leghosszabb (3-5 bekezdés) — a többi (vitals/activity/nutrition/meds) legyen tömör, 1-2 rövid bekezdés.
-- Ha a bariatriai_mutet_terv mezőben van dátum, és relevá­ns az adott szekcióhoz (pl. vitals: testsúly-trend a műtét előtt; meds: kiegészítők — de a konkrét leállítási határidőt az app külön figyelmezetésben már jelzi, ezt ne ismételd meg), említsd meg röviden.
-- Magyarul írj.
+- Ha nincs elég adat az adott területhez, mondd ki röviden ahelyett, hogy kitalálnál valamit.
+- Ha a bariatriai_mutet_terv mezőben van dátum és releváns, említsd meg röviden — de a kiegészítők konkrét leállítási határidejét az app külön figyelmezetésben már jelzi, ezt ne ismételd meg.
+- Magyarul írj, természetes folyó szöveg — NE markdown, NE JSON, NE lista, csak a bekezdések simán, egymástól üres sorral elválasztva. Ne írj bevezető mondatot vagy címet, kezdd rögtön az elemzéssel.`;
 
-VÁLASZ FORMÁTUM: kizárólag egy nyers JSON objektumot adj vissza, semmi mást — se markdown code fence-t, se bevezető szöveget. Pontosan ezekkel a kulcsokkal: {"vitals": "...", "activity": "...", "nutrition": "...", "meds": "...", "labor": "..."}. Minden érték egy sima szöveg (bekezdéseket \\n\\n-vel elválasztva), nem beágyazott objektum.`;
-
-// Anthropic occasionally wraps JSON in a markdown code fence despite being
-// told not to — strip it before parsing rather than failing the whole batch.
-function parseCoachSections(text) {
-  const cleaned = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
-  const parsed = JSON.parse(cleaned);
-  const sections = {};
-  ['vitals', 'activity', 'nutrition', 'meds', 'labor'].forEach((key) => {
-    sections[key] = typeof parsed[key] === 'string' ? parsed[key] : null;
-  });
-  return sections;
-}
+const COACH_SECTIONS = {
+  vitals: { label: 'a mérési (testsúly, vérnyomás, alvás, HRV, pulzus) adatokat', length: '1-2 rövid bekezdésben', maxTokens: 1024 },
+  activity: { label: 'a mozgás/aktivitás adatokat', length: '1-2 rövid bekezdésben', maxTokens: 1024 },
+  nutrition: { label: 'a táplálkozási (kalória, makrók, víz) adatokat', length: '1-2 rövid bekezdésben', maxTokens: 1024 },
+  meds: { label: 'a gyógyszer/kiegészítő/napi rutin betartásának adatait', length: '1-2 rövid bekezdésben', maxTokens: 1024 },
+  labor: { label: 'a labor (vérkép, vesefunkció, májfunkció, lipidek, anyagcsere) adatokat', length: '3-5 bekezdésben — ez lehet a legrészletesebb', maxTokens: 3072 }
+};
 
 async function sha256Hex(str) {
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-async function callAnthropic(env, systemPrompt, userContent) {
+async function callAnthropic(env, systemPrompt, userContent, maxTokens) {
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -481,11 +478,13 @@ async function callAnthropic(env, systemPrompt, userContent) {
     },
     body: JSON.stringify({
       model: 'claude-opus-5',
-      max_tokens: 6144,
-      // "medium" effort — this task (5 short-to-medium coaching blurbs from
-      // structured data) doesn't need max-depth reasoning, and full-depth
-      // thinking on top of 5 sections was pushing generation past ~120s,
-      // occasionally hitting a 524 gateway timeout on this background call.
+      max_tokens: maxTokens || 4096,
+      // "medium" effort — one short-to-medium coaching section from
+      // structured data doesn't need max-depth reasoning. Generating all 5
+      // sections sequentially in a single call used to push past 120s and
+      // occasionally hit a 524 gateway timeout; now each section is its own
+      // parallel call (see regenerateCoachNotes), so this mainly keeps
+      // per-call latency low rather than being the main speed lever.
       output_config: { effort: 'medium' },
       system: systemPrompt,
       messages: [{ role: 'user', content: userContent }]
@@ -540,31 +539,50 @@ async function gatherCoachInputs(env) {
 }
 
 async function regenerateCoachNotes(env, inputs, fingerprint) {
-  try {
-    const userContent = JSON.stringify({
-      ma: todayISO(),
-      legutobbi_ismert_meresek: inputs.vitals,
-      labor_teljes_tortenet: inputs.laborHistory,
-      labor_referenciatartomanyok: LAB_REFERENCE_RANGES,
-      bariatriai_mutet_terv: inputs.surgeryPlan,
-      napi_checklist_30_nap: inputs.checklistHistory,
-      mozgas_tortenet: inputs.activityHistory,
-      taplalkozas_napi_osszesitve_30_nap: inputs.mealsHistory
-    });
-    const raw = await callAnthropic(env, COACH_SYSTEM_PROMPT, userContent);
-    const sections = parseCoachSections(raw);
-    await env.COACH_KV.put(COACH_KV_KEY, JSON.stringify({
-      sections,
-      generatedAt: new Date().toISOString(),
-      dataHash: fingerprint
-    }));
-  } catch (err) {
-    // Leave whatever's already cached in place — since dataHash is untouched
-    // on failure, the next request will naturally retry instead of getting
-    // stuck on a bad write. Also catches a malformed-JSON response from
-    // parseCoachSections, not just network/API errors.
-    console.error('coach notes regeneration failed:', err);
-  }
+  // Kept so a section that fails this round can fall back to its last good
+  // text instead of going blank — a partial failure shouldn't regress a tab
+  // that was working, and since dataHash advances regardless (see below),
+  // an untouched failure here wouldn't get retried until data changes again.
+  const previous = await env.COACH_KV.get(COACH_KV_KEY, 'json');
+  const previousSections = (previous && previous.sections) || {};
+
+  const userContent = JSON.stringify({
+    ma: todayISO(),
+    legutobbi_ismert_meresek: inputs.vitals,
+    labor_teljes_tortenet: inputs.laborHistory,
+    labor_referenciatartomanyok: LAB_REFERENCE_RANGES,
+    bariatriai_mutet_terv: inputs.surgeryPlan,
+    napi_checklist_30_nap: inputs.checklistHistory,
+    mozgas_tortenet: inputs.activityHistory,
+    taplalkozas_napi_osszesitve_30_nap: inputs.mealsHistory
+  });
+
+  const keys = Object.keys(COACH_SECTIONS);
+  const results = await Promise.allSettled(keys.map((key) => {
+    const cfg = COACH_SECTIONS[key];
+    const systemPrompt = COACH_BASE_PROMPT + `\n\nEbben a válaszban KIZÁRÓLAG ${cfg.label} elemezd, ${cfg.length}.`;
+    return callAnthropic(env, systemPrompt, userContent, cfg.maxTokens);
+  }));
+
+  const sections = {};
+  let anySuccess = false;
+  results.forEach((r, i) => {
+    const key = keys[i];
+    if (r.status === 'fulfilled' && r.value && r.value.trim()) {
+      sections[key] = r.value.trim();
+      anySuccess = true;
+    } else {
+      console.error('coach section failed:', key, r.status === 'rejected' ? r.reason : 'empty response');
+      sections[key] = previousSections[key] || null;
+    }
+  });
+  if (!anySuccess) return; // total failure — leave the old cache/hash untouched so this gets retried next tick
+
+  await env.COACH_KV.put(COACH_KV_KEY, JSON.stringify({
+    sections,
+    generatedAt: new Date().toISOString(),
+    dataHash: fingerprint
+  }));
 }
 
 // A page load just reads whatever's cached — instant, no external calls.
