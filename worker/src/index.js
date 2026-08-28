@@ -422,6 +422,10 @@ const COACH_KV_KEY = 'coach-notes';
 // against the lab's own stated ranges instead of guessing.
 const LAB_REFERENCE_RANGES = {
   'Albumin': '35.0–52.0 g/L', 'Alkalikus foszfatáz': '40–129 U/L', 'Amiláz': '28–100 U/L',
+  'B12 (kobalamin)': 'pmol/L, referencia: kb. 150-670 (labortól függően eltérhet)',
+  'D-vitamin (25-OH)': 'nmol/L, referencia: kb. 50-125 (elégtelen <50, hiány <30, labortól függően eltérhet)',
+  'Ferritin': 'ug/L, referencia: kb. 30-400 (nemtől és labortól függően eltérhet)',
+  'Folsav': 'nmol/L, referencia: kb. 7-45 (labortól függően eltérhet)',
   'Bazofil %': '0.0–1.0 %', 'CK': '<172 U/L', 'CRP': '<5.00 mg/L', 'Eozinofil %': '1.0–4.0 %',
   'Foszfát': '0.81–1.45 mmol/L', 'GGT': '<55-60 U/L', 'GOT (AST)': '<50 U/L', 'GPT (ALT)': '<50 U/L',
   'Glükóz': '3.7–6.0 mmol/L (éhgyomri)', 'HDL koleszterin': '>1.04 mmol/L',

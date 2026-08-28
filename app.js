@@ -476,9 +476,14 @@ function showSurgeryModal(plan) {
     { label: 'Lipidek', fields: ['Koleszterin', 'HDL koleszterin', 'LDL koleszterin', 'Trigliceridek'] },
     { label: 'Anyagcsere', fields: ['Glükóz', 'HbA1c IFCC', 'HbA1c NGSP'] },
     { label: 'Gyulladás / enzimek', fields: ['CRP', 'Amiláz', 'Lipáz', 'CK'] },
-    { label: 'Egyéb', fields: ['TSH', 'PSA', 'Vas (Fe)'] }
+    { label: 'Mikrotápanyagok', fields: ['B12 (kobalamin)', 'Folsav', 'D-vitamin (25-OH)', 'Ferritin', 'Vas (Fe)'] },
+    { label: 'Egyéb', fields: ['TSH', 'PSA'] }
   ];
   const LAB_META = {
+    'B12 (kobalamin)': { unit: 'pmol/L', min: 150, max: 670 },
+    'D-vitamin (25-OH)': { unit: 'nmol/L', min: 50, max: 125 },
+    'Ferritin': { unit: 'ug/L', min: 30, max: 400 },
+    'Folsav': { unit: 'nmol/L', min: 7, max: 45 },
     'Albumin': { unit: 'g/L', min: 35.0, max: 52.0 },
     'Alkalikus foszfatáz': { unit: 'U/L', min: 40, max: 129 },
     'Amiláz': { unit: 'U/L', min: 28, max: 100 },
