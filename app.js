@@ -338,6 +338,33 @@ function showExportModal() {
 
   document.getElementById('hd-export-btn').addEventListener('click', () => showExportModal());
 
+  document.getElementById('hd-manual-vitals-toggle').addEventListener('click', (e) => {
+    const form = document.getElementById('hd-manual-vitals-form');
+    const isOpen = form.style.display !== 'none';
+    form.style.display = isOpen ? 'none' : 'block';
+    e.target.textContent = 'Kézi mérés hozzáadása (derékbőség, vérnyomás, pulzus) ' + (isOpen ? '▾' : '▴');
+  });
+
+  document.getElementById('hd-manual-vitals-save').addEventListener('click', async () => {
+    const errorEl = document.getElementById('hd-manual-vitals-error');
+    errorEl.textContent = '';
+    const body = {};
+    ['waist', 'sys', 'dia', 'pulse'].forEach((field) => {
+      const raw = document.getElementById('hd-mv-' + field).value;
+      if (raw !== '') body[field] = parseFloat(raw);
+    });
+    if (!Object.keys(body).length) {
+      errorEl.textContent = 'Legalább egy mezőt tölts ki.';
+      return;
+    }
+    try {
+      await api('/api/vitals/log', { method: 'POST', body: JSON.stringify(body) });
+      location.reload();
+    } catch (err) {
+      errorEl.textContent = 'Nem sikerült menteni: ' + err.message;
+    }
+  });
+
   // Top tabs (desktop) and the bottom nav (mobile, CSS-toggled) both use
   // .hd-tab-btn with the same data-tab values — keep both sets in sync by
   // active-class rather than just the one element clicked, so a resize
@@ -755,13 +782,21 @@ function showExportModal() {
     title.textContent = 'Coach jegyzetek';
     card.appendChild(title);
     const textWrap = document.createElement('div');
-    textWrap.className = 'hd-coach-text';
+    textWrap.className = 'hd-coach-text collapsed';
     text.split('\n').map((s) => s.trim()).filter(Boolean).forEach((line) => {
       const p = document.createElement('p');
       p.textContent = line;
       textWrap.appendChild(p);
     });
     card.appendChild(textWrap);
+    const toggle = document.createElement('button');
+    toggle.className = 'hd-coach-toggle';
+    toggle.textContent = 'Mutasd a teljeset ▾';
+    toggle.addEventListener('click', () => {
+      const isCollapsed = textWrap.classList.toggle('collapsed');
+      toggle.textContent = isCollapsed ? 'Mutasd a teljeset ▾' : 'Összecsukás ▴';
+    });
+    card.appendChild(toggle);
     const meta = document.createElement('p');
     meta.className = 'hd-coach-meta';
     meta.textContent = (generatedAt ? 'Frissítve: ' + generatedAt.slice(0, 16).replace('T', ' ') : '') + (stale ? ' · új adat alapján frissítés folyamatban' : '');
@@ -959,6 +994,9 @@ function showExportModal() {
   }
 
   const WATER_GLASSES = 11;
+  // One tap == one glass, rather than tapping a specific numbered glass in a
+  // row — friction reduction the user asked for directly (2026-08-28): the
+  // old row required picking the right number each time, this just counts up.
   function renderWater(waterCount, onChange) {
     const row = document.getElementById('hd-water-row');
     const summary = document.getElementById('hd-water-summary');
@@ -966,17 +1004,34 @@ function showExportModal() {
 
     function redraw() {
       row.innerHTML = '';
-      for (let i = 1; i <= WATER_GLASSES; i++) {
-        const g = document.createElement('div');
-        g.className = 'hd-glass' + (i <= filled ? ' filled' : '');
-        g.textContent = i;
-        g.addEventListener('click', async () => {
-          filled = filled === i ? i - 1 : i;
+      const addBtn = document.createElement('button');
+      addBtn.className = 'hd-btn hd-water-add';
+      addBtn.textContent = '+1 pohár 💧';
+      addBtn.addEventListener('click', async () => {
+        filled += 1;
+        await onChange(filled);
+        redraw();
+      });
+      row.appendChild(addBtn);
+      if (filled > 0) {
+        const undoBtn = document.createElement('button');
+        undoBtn.className = 'hd-btn ghost';
+        undoBtn.textContent = '−1 (elírás javítása)';
+        undoBtn.addEventListener('click', async () => {
+          filled -= 1;
           await onChange(filled);
           redraw();
         });
-        row.appendChild(g);
+        row.appendChild(undoBtn);
       }
+      const dots = document.createElement('div');
+      dots.className = 'hd-glass-dots';
+      for (let i = 1; i <= WATER_GLASSES; i++) {
+        const dot = document.createElement('div');
+        dot.className = 'hd-glass-dot' + (i <= filled ? ' filled' : '');
+        dots.appendChild(dot);
+      }
+      row.appendChild(dots);
       summary.textContent = filled + ' / ' + WATER_GLASSES + ' pohár (' + filled * 250 + ' / ' + WATER_GLASSES * 250 + ' ml)';
     }
     redraw();

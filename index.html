@@ -82,9 +82,11 @@
   .hd-meal-type { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--sage); font-weight: 600; }
   .hd-meal-desc { font-size: 14px; margin: 4px 0 6px; }
   .hd-meal-macros { font-family: 'IBM Plex Mono', monospace; font-size: 12px; opacity: .65; }
-  .hd-glass-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
-  .hd-glass { width: 40px; height: 40px; border-radius: 8px; border: 1.5px solid var(--line); background: var(--card); display: flex; align-items: center; justify-content: center; font-family: 'IBM Plex Mono', monospace; font-size: 12px; cursor: pointer; color: var(--ink); opacity: .6; }
-  .hd-glass.filled { background: var(--gold); border-color: var(--gold); opacity: 1; color: var(--ink); font-weight: 600; }
+  .hd-glass-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 8px; }
+  .hd-water-add { font-size: 15px; padding: 12px 22px; }
+  .hd-glass-dots { display: flex; flex-wrap: wrap; gap: 5px; width: 100%; margin-top: 4px; }
+  .hd-glass-dot { width: 14px; height: 14px; border-radius: 50%; border: 1.5px solid var(--line); background: var(--card); }
+  .hd-glass-dot.filled { background: var(--gold); border-color: var(--gold); }
   .hd-water-summary { font-family: 'IBM Plex Mono', monospace; font-size: 13px; margin-top: 10px; opacity: .75; }
   .hd-sleep-debt { font-family: 'IBM Plex Mono', monospace; font-size: 13px; margin-top: 10px; opacity: .75; }
   .hd-consist-row { padding: 8px 4px; border-bottom: 1px solid var(--line); cursor: pointer; }
@@ -122,7 +124,13 @@
   .hd-coach-title { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--gold); font-weight: 600; margin: 0 0 8px; }
   .hd-coach-text p { font-size: 14px; line-height: 1.55; margin: 0 0 10px; }
   .hd-coach-text p:last-child { margin-bottom: 0; }
+  .hd-coach-text.collapsed { max-height: 68px; overflow: hidden; position: relative; }
+  .hd-coach-text.collapsed::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 28px; background: linear-gradient(to bottom, transparent, var(--card)); }
+  .hd-coach-toggle { display: block; background: none; border: none; color: var(--gold); font-size: 12px; font-weight: 600; padding: 8px 0 0; margin: 0; cursor: pointer; font-family: inherit; }
   .hd-coach-meta { font-size: 11px; opacity: .5; font-family: 'IBM Plex Mono', monospace; margin-top: 10px; }
+  .hd-manual-vitals-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
+  .hd-manual-vitals-grid label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; opacity: .7; }
+  .hd-manual-vitals-grid input { font-family: 'IBM Plex Mono', monospace; font-size: 14px; padding: 7px 9px; border-radius: 6px; border: 1px solid var(--line); background: var(--paper); color: var(--ink); }
 </style>
 </head>
 <body>
@@ -162,6 +170,19 @@
       <div class="hd-card hd-tap-card" data-vfield="pulse"><p class="hd-stat-label">Pulzus</p><p class="hd-stat-value"><span id="hd-vital-pulse">—</span> <span style="font-size:12px;opacity:.6">/perc</span></p></div>
     </div>
     <div id="hd-vitals-chart" style="display:none;"></div>
+
+    <button class="hd-coach-toggle" id="hd-manual-vitals-toggle" style="padding:8px 0;">Kézi mérés hozzáadása (derékbőség, vérnyomás, pulzus) ▾</button>
+    <div class="hd-card" id="hd-manual-vitals-form" style="display:none; margin-bottom:14px;">
+      <div class="hd-manual-vitals-grid">
+        <label>Derékbőség (cm)<input type="number" step="0.1" id="hd-mv-waist" /></label>
+        <label>Sys (Hgmm)<input type="number" step="1" id="hd-mv-sys" /></label>
+        <label>Dia (Hgmm)<input type="number" step="1" id="hd-mv-dia" /></label>
+        <label>Pulzus (/perc)<input type="number" step="1" id="hd-mv-pulse" /></label>
+      </div>
+      <p style="font-size:12px; opacity:.6; margin:8px 0 0;">Csak a kitöltött mezők mentődnek. A mai naphoz kerül, a meglévő automata adatokat nem írja felül.</p>
+      <p class="hd-modal-error" id="hd-manual-vitals-error"></p>
+      <button class="hd-btn" id="hd-manual-vitals-save" style="margin-top:8px;">Mentés</button>
+    </div>
 
     <p class="hd-section-title">Alvás</p>
     <div class="hd-grid">
@@ -350,7 +371,7 @@
 <!-- Bump ?v= on every deploy that touches app.js, so a stale cached index.html
      can never load a mismatched app.js (and vice versa) — this is what caused
      the "getElementById(...) is null" error after the sleep-section update. -->
-<script src="app.js?v=14"></script>
+<script src="app.js?v=15"></script>
 <script>
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => navigator.serviceWorker.register('sw.js'));

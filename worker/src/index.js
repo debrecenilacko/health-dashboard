@@ -379,6 +379,10 @@ async function postVitalsLog(env, body) {
   if (typeof body.weight === 'number') properties['Súly (kg)'] = { number: body.weight };
   if (typeof body.bodyFat === 'number') properties['Testzsír (%)'] = { number: body.bodyFat };
   if (typeof body.bmi === 'number') properties['BMI'] = { number: body.bmi };
+  if (typeof body.waist === 'number') properties['Derékbőség (cm)'] = { number: body.waist };
+  if (typeof body.sys === 'number') properties['Sys (Hgmm)'] = { number: body.sys };
+  if (typeof body.dia === 'number') properties['Dia (Hgmm)'] = { number: body.dia };
+  if (typeof body.pulse === 'number') properties['Pulzus (/perc)'] = { number: body.pulse };
 
   // The Renpho sync can fire several times for one weigh-in (partial then
   // corrected readings), so merge same-day writes onto one page instead of
@@ -398,7 +402,7 @@ async function postVitalsLog(env, body) {
         properties: {
           Name: { title: [{ text: { content: d } }] },
           'Dátum': { date: { start: d } },
-          'Forrás': { select: { name: 'Automata (Renpho)' } },
+          'Forrás': { select: { name: 'Kézi bevitel' } },
           ...properties
         }
       })
