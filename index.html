@@ -153,6 +153,7 @@
   </nav>
 
   <div class="hd-panel active" data-panel="vitals">
+    <div id="hd-weekly-digest"></div>
     <div id="hd-coach-vitals"></div>
     <div class="hd-grid">
       <div class="hd-card hd-tap-card" data-vfield="weight"><p class="hd-stat-label">Súly</p><p class="hd-stat-value"><span id="hd-vital-weight">—</span> <span style="font-size:12px;opacity:.6">kg</span></p></div>
@@ -349,7 +350,7 @@
 <!-- Bump ?v= on every deploy that touches app.js, so a stale cached index.html
      can never load a mismatched app.js (and vice versa) — this is what caused
      the "getElementById(...) is null" error after the sleep-section update. -->
-<script src="app.js?v=13"></script>
+<script src="app.js?v=14"></script>
 <script>
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => navigator.serviceWorker.register('sw.js'));

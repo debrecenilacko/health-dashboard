@@ -157,6 +157,82 @@ function showSurgeryModal(plan) {
   });
 }
 
+// Terse week-over-week diff, computed entirely from history already fetched
+// for other cards (vitalsHistory / checklistHistoryState / mealsHistoryState)
+// — no dedicated endpoint. Dates are compared as strings (all sources use
+// ISO 'YYYY-MM-DD' date keys) rather than assumed array order, since
+// checklistHistoryState comes back newest-first while the others are
+// oldest-first.
+function avgField(arr, field) {
+  const vals = arr.filter((h) => h[field] != null).map((h) => h[field]);
+  return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+}
+function lastByDate(arr, field) {
+  const rows = arr.filter((h) => h[field] != null).slice().sort((a, b) => a.date.localeCompare(b.date));
+  return rows.length ? rows[rows.length - 1][field] : null;
+}
+function renderWeeklyDigest(vitalsHistory, checklistHistoryState, mealsHistoryState) {
+  const el = document.getElementById('hd-weekly-digest');
+  if (!el) return;
+  const dayKey = (n) => { const x = new Date(); x.setDate(x.getDate() - n); return x.toISOString().slice(0, 10); };
+  const thisWeekStart = dayKey(7), todayK = dayKey(0), prevWeekStart = dayKey(14);
+  const thisWeek = (arr) => arr.filter((h) => h.date >= thisWeekStart && h.date <= todayK);
+  const prevWeek = (arr) => arr.filter((h) => h.date >= prevWeekStart && h.date < thisWeekStart);
+
+  const lines = [];
+
+  const wNow = lastByDate(thisWeek(vitalsHistory), 'weight');
+  const wPrev = lastByDate(prevWeek(vitalsHistory), 'weight');
+  if (wNow != null && wPrev != null) {
+    const delta = wNow - wPrev;
+    lines.push('Súly: ' + wNow.toFixed(1) + ' kg (' + (delta >= 0 ? '+' : '') + delta.toFixed(1) + ' kg az előző héthez képest)');
+  }
+
+  const stepsNow = avgField(thisWeek(vitalsHistory), 'steps');
+  const stepsPrev = avgField(prevWeek(vitalsHistory), 'steps');
+  if (stepsNow != null && stepsPrev != null) {
+    const delta = Math.round(stepsNow - stepsPrev);
+    lines.push('Lépés: napi ' + Math.round(stepsNow) + ' (előző hét: ' + Math.round(stepsPrev) + ', ' + (delta >= 0 ? '+' : '') + delta + ')');
+  }
+
+  const waterNow = avgField(thisWeek(checklistHistoryState), 'water');
+  const waterPrev = avgField(prevWeek(checklistHistoryState), 'water');
+  if (waterNow != null && waterPrev != null) {
+    lines.push('Víz: napi ' + waterNow.toFixed(1) + ' pohár (előző hét: ' + waterPrev.toFixed(1) + ')');
+  }
+
+  const proteinNow = avgField(thisWeek(mealsHistoryState), 'protein');
+  const proteinPrev = avgField(prevWeek(mealsHistoryState), 'protein');
+  if (proteinNow != null && proteinPrev != null) {
+    lines.push('Fehérje: napi ' + Math.round(proteinNow) + 'g (előző hét: ' + Math.round(proteinPrev) + 'g)');
+  }
+
+  const sleepNow = avgField(thisWeek(vitalsHistory), 'sleepHours');
+  const sleepPrev = avgField(prevWeek(vitalsHistory), 'sleepHours');
+  if (sleepNow != null && sleepPrev != null) {
+    lines.push('Alvás: napi ' + sleepNow.toFixed(1) + ' óra (előző hét: ' + sleepPrev.toFixed(1) + ' óra)');
+  }
+
+  el.innerHTML = '';
+  if (!lines.length) return;
+  const wrap = document.createElement('div');
+  wrap.className = 'hd-card';
+  wrap.style.marginBottom = '14px';
+  const title = document.createElement('p');
+  title.className = 'hd-section-title';
+  title.style.marginTop = '0';
+  title.textContent = 'Mi változott a héten';
+  wrap.appendChild(title);
+  lines.forEach((line) => {
+    const p = document.createElement('p');
+    p.style.margin = '4px 0';
+    p.style.fontSize = '13px';
+    p.textContent = line;
+    wrap.appendChild(p);
+  });
+  el.appendChild(wrap);
+}
+
 function downloadBlob(filename, mime, content) {
   const blob = new Blob([content], { type: mime });
   const url = URL.createObjectURL(blob);
@@ -1028,6 +1104,7 @@ function showExportModal() {
       renderAllCoachSections(coachNotes);
       renderSurgeryWarning(surgeryPlan, checklist);
       renderSuggestedTests(suggestedTests);
+      renderWeeklyDigest(vitalsHistory, checklistRecent, mealsRecent);
 
       renderChecklistRow(document.getElementById('hd-nw-list'), ['Nordic walking'], checklist, async (field, val) => {
         await api('/api/checklist/today', { method: 'POST', body: JSON.stringify({ [field]: val }) });
