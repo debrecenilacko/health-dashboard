@@ -157,6 +157,91 @@ function showSurgeryModal(plan) {
   });
 }
 
+function downloadBlob(filename, mime, content) {
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+async function gatherExportData() {
+  const [vitals, labor, meals, checklist, activity, surgeryPlan, suggestedTests] = await Promise.all([
+    api('/api/vitals/recent?limit=100'),
+    api('/api/labor/recent?limit=100'),
+    api('/api/meals/recent?days=100'),
+    api('/api/checklist/recent?days=100'),
+    api('/api/activity/recent'),
+    api('/api/surgery-plan'),
+    api('/api/suggested-tests')
+  ]);
+  return { vitals, labor, meals, checklist, activity, surgeryPlan, suggestedTests };
+}
+
+// Long/tidy format (domain,date,field,value) so wildly different per-domain
+// schemas (vitals vs. labor vs. meals vs. checklist) can share one CSV
+// without every row needing every column.
+function exportDataToCsv(data) {
+  const rows = [['domain', 'date', 'field', 'value']];
+  ['vitals', 'labor', 'meals', 'checklist', 'activity'].forEach((domain) => {
+    (data[domain] || []).forEach((entry) => {
+      Object.keys(entry).forEach((field) => {
+        if (field === 'date') return;
+        const value = entry[field];
+        if (value === null || value === undefined || value === '') return;
+        rows.push([domain, entry.date || '', field, String(value)]);
+      });
+    });
+  });
+  return rows.map((r) => r.map((cell) => '"' + String(cell).replace(/"/g, '""') + '"').join(',')).join('\n');
+}
+
+function showExportModal() {
+  const overlay = document.getElementById('hd-export-overlay');
+  const errorEl = document.getElementById('hd-export-error');
+  const jsonBtn = document.getElementById('hd-export-json');
+  const csvBtn = document.getElementById('hd-export-csv');
+  const cancelBtn = document.getElementById('hd-export-cancel');
+  errorEl.textContent = '';
+  overlay.style.display = 'flex';
+
+  function cleanup() {
+    overlay.style.display = 'none';
+    jsonBtn.removeEventListener('click', onJson);
+    csvBtn.removeEventListener('click', onCsv);
+    cancelBtn.removeEventListener('click', onCancel);
+  }
+  const exportDate = new Date().toISOString().slice(0, 10);
+  async function onJson() {
+    try {
+      const data = await gatherExportData();
+      downloadBlob('egeszseg-export-' + exportDate + '.json', 'application/json', JSON.stringify(data, null, 2));
+      cleanup();
+    } catch (err) {
+      errorEl.textContent = 'Nem sikerült exportálni: ' + err.message;
+    }
+  }
+  async function onCsv() {
+    try {
+      const data = await gatherExportData();
+      downloadBlob('egeszseg-export-' + exportDate + '.csv', 'text/csv', exportDataToCsv(data));
+      cleanup();
+    } catch (err) {
+      errorEl.textContent = 'Nem sikerült exportálni: ' + err.message;
+    }
+  }
+  function onCancel() {
+    cleanup();
+  }
+  jsonBtn.addEventListener('click', onJson);
+  csvBtn.addEventListener('click', onCsv);
+  cancelBtn.addEventListener('click', onCancel);
+}
+
 (function () {
   const todayKey = new Date().toISOString().slice(0, 10);
   document.getElementById('hd-date').textContent = todayKey;
@@ -174,6 +259,8 @@ function showSurgeryModal(plan) {
     const saved = await showSurgeryModal(plan);
     if (saved) location.reload();
   });
+
+  document.getElementById('hd-export-btn').addEventListener('click', () => showExportModal());
 
   // Top tabs (desktop) and the bottom nav (mobile, CSS-toggled) both use
   // .hd-tab-btn with the same data-tab values — keep both sets in sync by

@@ -132,6 +132,7 @@
     <div class="hd-date" id="hd-date"></div>
     <div style="display:flex; gap:8px;">
       <button class="hd-settings-btn" id="hd-surgery-btn" title="Bariátriai időpontok">🏥</button>
+      <button class="hd-settings-btn" id="hd-export-btn" title="Adatok exportálása">⬇</button>
       <button class="hd-settings-btn" id="hd-settings-btn" title="Backend beállítások">⚙</button>
     </div>
   </div>
@@ -328,12 +329,27 @@
   </div>
 </div>
 
+<div class="hd-modal-overlay" id="hd-export-overlay">
+  <div class="hd-modal">
+    <p class="hd-section-title" style="margin-top:0;">Adatok exportálása</p>
+    <p style="font-size:13px; opacity:.7; margin:0 0 14px;">Minden mérés, labor, étkezés és checklist adat letöltése a jelenlegi backendről.</p>
+    <p class="hd-modal-error" id="hd-export-error"></p>
+    <div class="hd-modal-actions" style="justify-content:flex-start; gap:8px;">
+      <button class="hd-btn" id="hd-export-json">JSON letöltése</button>
+      <button class="hd-btn" id="hd-export-csv">CSV letöltése</button>
+    </div>
+    <div class="hd-modal-actions">
+      <button class="hd-btn ghost" id="hd-export-cancel">Bezár</button>
+    </div>
+  </div>
+</div>
+
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-plugin-annotation/3.0.1/chartjs-plugin-annotation.min.js"></script>
 <!-- Bump ?v= on every deploy that touches app.js, so a stale cached index.html
      can never load a mismatched app.js (and vice versa) — this is what caused
      the "getElementById(...) is null" error after the sleep-section update. -->
-<script src="app.js?v=12"></script>
+<script src="app.js?v=13"></script>
 <script>
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => navigator.serviceWorker.register('sw.js'));
