@@ -171,6 +171,21 @@ function lastByDate(arr, field) {
   const rows = arr.filter((h) => h[field] != null).slice().sort((a, b) => a.date.localeCompare(b.date));
   return rows.length ? rows[rows.length - 1][field] : null;
 }
+// Consecutive days (ending today or yesterday — "yesterday" so the streak
+// doesn't visibly drop to 0 first thing in the morning before today's row
+// exists yet) that have *any* checklist row at all. Mirrors the existing
+// "no row = never logged" denominator logic already used by the consistency
+// view, just walked backward day by day instead of averaged.
+function computeLoggingStreak(checklistHistoryState) {
+  const dates = new Set((checklistHistoryState || []).map((h) => h.date));
+  const dayKey = (n) => { const x = new Date(); x.setDate(x.getDate() - n); return x.toISOString().slice(0, 10); };
+  if (!dates.has(dayKey(0)) && !dates.has(dayKey(1))) return 0;
+  let offset = dates.has(dayKey(0)) ? 0 : 1;
+  let streak = 0;
+  while (dates.has(dayKey(offset))) { streak++; offset++; }
+  return streak;
+}
+
 function renderWeeklyDigest(vitalsHistory, checklistHistoryState, mealsHistoryState) {
   const el = document.getElementById('hd-weekly-digest');
   if (!el) return;
@@ -180,6 +195,11 @@ function renderWeeklyDigest(vitalsHistory, checklistHistoryState, mealsHistorySt
   const prevWeek = (arr) => arr.filter((h) => h.date >= prevWeekStart && h.date < thisWeekStart);
 
   const lines = [];
+
+  const streak = computeLoggingStreak(checklistHistoryState);
+  if (streak >= 2) {
+    lines.push('🔥 ' + streak + ' napja folyamatosan logolsz — szép munka.');
+  }
 
   const wNow = lastByDate(thisWeek(vitalsHistory), 'weight');
   const wPrev = lastByDate(prevWeek(vitalsHistory), 'weight');
