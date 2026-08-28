@@ -2,3 +2,4 @@
 node_modules/
 worker/.wrangler/
 .wrangler/
+worker/.vapid-private-key.json
