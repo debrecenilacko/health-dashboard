@@ -282,6 +282,12 @@
 
   <div class="hd-panel" data-panel="labor">
     <div id="hd-coach-notes"></div>
+    <p class="hd-section-title">Javasolt vizsgálatok</p>
+    <ul class="hd-checklist" id="hd-suggested-tests-list"></ul>
+    <div class="hd-add-row">
+      <input type="text" id="hd-suggested-test-input" placeholder="pl. ApoB" />
+      <button class="hd-btn" id="hd-suggested-test-add">Hozzáad</button>
+    </div>
     <div id="hd-labor-groups"></div>
     <p style="font-size:12px; opacity:.55; margin-top:12px;">Minden marker a legutóbbi ismert értékét mutatja — a dátum jelzi, mikor mérték. Piros = a Notionban tárolt referenciatartományon kívül. Koppints egy markerre a teljes trendhez.</p>
   </div>
@@ -322,6 +328,6 @@
 <!-- Bump ?v= on every deploy that touches app.js, so a stale cached index.html
      can never load a mismatched app.js (and vice versa) — this is what caused
      the "getElementById(...) is null" error after the sleep-section update. -->
-<script src="app.js?v=11"></script>
+<script src="app.js?v=12"></script>
 </body>
 </html>

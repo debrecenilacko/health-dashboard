@@ -856,9 +856,62 @@ function showSurgeryModal(plan) {
     };
   }
 
+  function renderSuggestedTests(items) {
+    const ul = document.getElementById('hd-suggested-tests-list');
+    const list = items.slice();
+
+    async function save() {
+      await api('/api/suggested-tests', { method: 'POST', body: JSON.stringify({ items: list }) });
+    }
+
+    function redraw() {
+      ul.innerHTML = '';
+      list.forEach((item, idx) => {
+        const li = document.createElement('li');
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.checked = !!item.done;
+        checkbox.id = 'hd-suggested-test-' + item.id;
+        checkbox.addEventListener('change', async () => {
+          item.done = checkbox.checked;
+          label.classList.toggle('done', item.done);
+          await save();
+        });
+        const label = document.createElement('label');
+        label.htmlFor = checkbox.id;
+        label.textContent = item.text;
+        if (item.done) label.classList.add('done');
+        const rm = document.createElement('button');
+        rm.className = 'hd-btn ghost';
+        rm.textContent = 'törlés';
+        rm.style.marginLeft = 'auto';
+        rm.addEventListener('click', async () => {
+          list.splice(idx, 1);
+          await save();
+          redraw();
+        });
+        li.appendChild(checkbox);
+        li.appendChild(label);
+        li.appendChild(rm);
+        ul.appendChild(li);
+      });
+    }
+    redraw();
+
+    document.getElementById('hd-suggested-test-add').onclick = async () => {
+      const input = document.getElementById('hd-suggested-test-input');
+      const val = input.value.trim();
+      if (!val) return;
+      list.push({ id: 'test-' + Date.now(), text: val, done: false });
+      await save();
+      input.value = '';
+      redraw();
+    };
+  }
+
   async function main() {
     try {
-      const [vitals, meals, activities, checklist, labor, coachNotes, surgeryPlan, vitalsRecent, checklistRecent, mealsRecent] = await Promise.all([
+      const [vitals, meals, activities, checklist, labor, coachNotes, surgeryPlan, vitalsRecent, checklistRecent, mealsRecent, suggestedTests] = await Promise.all([
         api('/api/vitals/today'),
         api('/api/meals/today'),
         api('/api/activity/recent'),
@@ -868,7 +921,8 @@ function showSurgeryModal(plan) {
         api('/api/surgery-plan'),
         api('/api/vitals/recent?limit=100'),
         api('/api/checklist/recent?days=30'),
-        api('/api/meals/recent?days=30')
+        api('/api/meals/recent?days=30'),
+        api('/api/suggested-tests')
       ]);
 
       vitalsHistory = vitalsRecent;
@@ -886,6 +940,7 @@ function showSurgeryModal(plan) {
       renderLabor(labor);
       renderAllCoachSections(coachNotes);
       renderSurgeryWarning(surgeryPlan, checklist);
+      renderSuggestedTests(suggestedTests);
 
       renderChecklistRow(document.getElementById('hd-nw-list'), ['Nordic walking'], checklist, async (field, val) => {
         await api('/api/checklist/today', { method: 'POST', body: JSON.stringify({ [field]: val }) });

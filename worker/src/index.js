@@ -529,6 +529,41 @@ async function saveSurgeryPlan(env, body) {
   return plan;
 }
 
+// ---- Suggested tests (persistent checklist) --------------------------------
+// A simple user-editable list the coach's own past recommendations seed —
+// stored whole in COACH_KV and replaced wholesale on every save (no per-item
+// diffing needed at this scale).
+
+const SUGGESTED_TESTS_KV_KEY = 'suggested-tests';
+const DEFAULT_SUGGESTED_TESTS = [
+  { id: 'apob', text: 'ApoB', done: false },
+  { id: 'lpa', text: 'Lp(a)', done: false },
+  { id: 'hscrp', text: 'hsCRP', done: false },
+  { id: 'transzferrin-szat', text: 'Transzferrin szaturáció', done: false },
+  { id: 'alvasvizsgalat', text: 'Alvásvizsgálat (poliszomnográfia)', done: false },
+  { id: 'fib4', text: 'FIB-4 / májelasztográfia', done: false },
+  { id: 'kalcium-recheck', text: 'Kalcium-recheck', done: false }
+];
+
+async function getSuggestedTests(env) {
+  const tests = await env.COACH_KV.get(SUGGESTED_TESTS_KV_KEY, 'json');
+  return tests || DEFAULT_SUGGESTED_TESTS;
+}
+
+async function saveSuggestedTests(env, body) {
+  const items = Array.isArray(body.items)
+    ? body.items
+        .filter((it) => it && typeof it.text === 'string' && it.text.trim())
+        .map((it) => ({
+          id: typeof it.id === 'string' && it.id ? it.id : crypto.randomUUID(),
+          text: it.text.trim(),
+          done: !!it.done
+        }))
+    : DEFAULT_SUGGESTED_TESTS;
+  await env.COACH_KV.put(SUGGESTED_TESTS_KV_KEY, JSON.stringify(items));
+  return items;
+}
+
 // Everything the coach prompt reasons over, gathered once per request/tick.
 async function gatherCoachInputs(env) {
   const [vitals, laborHistory, surgeryPlan, checklistHistory, activityHistory, mealsHistory] = await Promise.all([
@@ -689,6 +724,13 @@ export default {
       if (url.pathname === '/api/surgery-plan' && request.method === 'POST') {
         const body = await request.json();
         return json(await saveSurgeryPlan(env, body));
+      }
+      if (url.pathname === '/api/suggested-tests' && request.method === 'GET') {
+        return json(await getSuggestedTests(env));
+      }
+      if (url.pathname === '/api/suggested-tests' && request.method === 'POST') {
+        const body = await request.json();
+        return json(await saveSuggestedTests(env, body));
       }
       return json({ error: 'not found' }, 404);
     } catch (err) {
