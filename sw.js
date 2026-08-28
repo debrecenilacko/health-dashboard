@@ -18,6 +18,28 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
+self.addEventListener('push', (event) => {
+  let data = { title: 'Egészség Dashboard', body: '' };
+  try { if (event.data) data = event.data.json(); } catch (err) { /* ignore malformed payload */ }
+  event.waitUntil(
+    self.registration.showNotification(data.title || 'Egészség Dashboard', {
+      body: data.body || '',
+      icon: 'icons/icon-192.png',
+      badge: 'icons/icon-192.png'
+    })
+  );
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window' }).then((clients) => {
+      if (clients.length) return clients[0].focus();
+      return self.clients.openWindow('./index.html');
+    })
+  );
+});
+
 self.addEventListener('fetch', (event) => {
   const req = event.request;
   if (req.method !== 'GET') return;

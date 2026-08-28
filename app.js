@@ -2,6 +2,40 @@
 // turn talks to Notion. Nothing here holds the real Notion secret; it only
 // holds the API base URL and the lightweight APP_TOKEN you chose yourself.
 
+// Public by design — sent to the browser as part of the subscribe call, the
+// matching private key never leaves the Worker (Cloudflare secret).
+const VAPID_PUBLIC_KEY = 'BMz623-2szCzT-nWfTxBAvBHhvMwnEvgbZ4wQUJuy_w_oqXODo71lZ1U6hEjfz8kVOyWL6Ms0myLF-PlfoXX3FI';
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(base64);
+  return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
+}
+
+async function subscribeToPushNotifications(statusEl) {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+    statusEl.textContent = 'Ez a böngésző nem támogatja az értesítéseket.';
+    return;
+  }
+  const permission = await Notification.requestPermission();
+  if (permission !== 'granted') {
+    statusEl.textContent = 'Nincs engedélyezve az értesítés.';
+    return;
+  }
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const subscription = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
+    });
+    await api('/api/push-subscription', { method: 'POST', body: JSON.stringify(subscription.toJSON()) });
+    statusEl.textContent = 'Napi emlékeztető bekapcsolva.';
+  } catch (err) {
+    statusEl.textContent = 'Nem sikerült bekapcsolni: ' + err.message;
+  }
+}
+
 const CONFIG_KEY = 'hd-config';
 
 function getConfig() {
@@ -357,6 +391,19 @@ function showExportModal() {
   });
 
   document.getElementById('hd-export-btn').addEventListener('click', () => showExportModal());
+
+  document.getElementById('hd-push-subscribe-btn').addEventListener('click', async () => {
+    const statusEl = document.getElementById('hd-push-status');
+    statusEl.textContent = 'Bekapcsolás…';
+    await subscribeToPushNotifications(statusEl);
+  });
+
+  document.getElementById('hd-workout-plan-toggle').addEventListener('click', (e) => {
+    const editor = document.getElementById('hd-workout-plan-editor');
+    const isOpen = editor.style.display !== 'none';
+    editor.style.display = isOpen ? 'none' : 'block';
+    e.target.textContent = 'Heti program szerkesztése ' + (isOpen ? '▾' : '▴');
+  });
 
   document.getElementById('hd-manual-vitals-toggle').addEventListener('click', (e) => {
     const form = document.getElementById('hd-manual-vitals-form');
@@ -1057,6 +1104,177 @@ function showExportModal() {
     redraw();
   }
 
+  // ---- Weekly workout program -------------------------------------------
+  const WORKOUT_DAY_ORDER = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+  const WORKOUT_DAY_LABELS = { monday: 'Hétfő', tuesday: 'Kedd', wednesday: 'Szerda', thursday: 'Csütörtök', friday: 'Péntek', saturday: 'Szombat', sunday: 'Vasárnap' };
+  let workoutRecentHistory = [];
+  const workoutChartInstances = {};
+
+  function toggleWorkoutChart(exerciseName) {
+    const chartWrap = document.getElementById('hd-workout-chart');
+    const prevKey = chartWrap.dataset.activeKey;
+    const wasOpen = chartWrap.style.display !== 'none';
+    if (wasOpen && prevKey && prevKey !== exerciseName) {
+      toggleTrendChart(chartWrap, workoutChartInstances, prevKey, [], []);
+    }
+    const closingSame = wasOpen && prevKey === exerciseName;
+    const points = workoutRecentHistory.filter((r) => r.exercise === exerciseName && r.weight != null).map((r) => ({ date: r.date, value: r.weight }));
+    toggleTrendChart(chartWrap, workoutChartInstances, exerciseName, [{ label: 'Súly (kg)', points }], []);
+    chartWrap.dataset.activeKey = closingSame ? '' : exerciseName;
+    document.querySelectorAll('#hd-workout-today-list li').forEach((li) => li.classList.toggle('active', !closingSame && li.dataset.exercise === exerciseName));
+  }
+
+  function renderWorkoutToday(items) {
+    const ul = document.getElementById('hd-workout-today-list');
+    const emptyEl = document.getElementById('hd-workout-today-empty');
+    ul.innerHTML = '';
+    if (!items || !items.length) {
+      emptyEl.textContent = 'Ma nincs edzés betervezve — állítsd be a heti programot lentebb.';
+      return;
+    }
+    emptyEl.textContent = '';
+    items.forEach((ex) => {
+      const li = document.createElement('li');
+      li.dataset.exercise = ex.name;
+
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = !!ex.done;
+
+      const label = document.createElement('label');
+      label.style.cursor = 'pointer';
+      label.textContent = ex.name;
+      if (ex.done) label.classList.add('done');
+      label.addEventListener('click', (e) => { e.preventDefault(); toggleWorkoutChart(ex.name); });
+
+      const setsInput = document.createElement('input');
+      setsInput.type = 'number'; setsInput.placeholder = 'szett'; setsInput.className = 'hd-workout-mini-input';
+      setsInput.value = ex.done ? (ex.loggedSets ?? '') : (ex.sets ?? '');
+      const repsInput = document.createElement('input');
+      repsInput.type = 'number'; repsInput.placeholder = 'ism.'; repsInput.className = 'hd-workout-mini-input';
+      repsInput.value = ex.done ? (ex.loggedReps ?? '') : (ex.reps ?? '');
+      const weightInput = document.createElement('input');
+      weightInput.type = 'number'; weightInput.step = '0.5'; weightInput.placeholder = 'kg'; weightInput.className = 'hd-workout-mini-input';
+      weightInput.value = ex.done ? (ex.loggedWeight ?? '') : (ex.weight ?? '');
+
+      cb.addEventListener('change', async () => {
+        cb.disabled = true;
+        try {
+          if (cb.checked) {
+            await api('/api/workout/log', {
+              method: 'POST',
+              body: JSON.stringify({
+                exercise: ex.name,
+                sets: setsInput.value === '' ? undefined : Number(setsInput.value),
+                reps: repsInput.value === '' ? undefined : Number(repsInput.value),
+                weight: weightInput.value === '' ? undefined : Number(weightInput.value)
+              })
+            });
+            label.classList.add('done');
+          } else {
+            await api('/api/workout/unlog', { method: 'POST', body: JSON.stringify({ exercise: ex.name }) });
+            label.classList.remove('done');
+          }
+        } finally {
+          cb.disabled = false;
+        }
+      });
+
+      li.appendChild(cb);
+      li.appendChild(label);
+      li.appendChild(setsInput);
+      li.appendChild(repsInput);
+      li.appendChild(weightInput);
+      ul.appendChild(li);
+    });
+  }
+
+  function renderWorkoutPlanEditor(plan) {
+    const wrap = document.getElementById('hd-workout-plan-editor');
+    const state = {};
+    WORKOUT_DAY_ORDER.forEach((day) => { state[day] = (plan[day] || []).map((ex) => ({ ...ex })); });
+
+    function redraw() {
+      wrap.innerHTML = '';
+      WORKOUT_DAY_ORDER.forEach((day) => {
+        const dayCard = document.createElement('div');
+        dayCard.className = 'hd-card';
+        dayCard.style.marginBottom = '10px';
+        const title = document.createElement('p');
+        title.className = 'hd-stat-label';
+        title.textContent = WORKOUT_DAY_LABELS[day];
+        dayCard.appendChild(title);
+
+        state[day].forEach((ex, idx) => {
+          const row = document.createElement('div');
+          row.className = 'hd-workout-plan-row';
+
+          const nameInput = document.createElement('input');
+          nameInput.type = 'text'; nameInput.placeholder = 'gyakorlat neve'; nameInput.value = ex.name || '';
+          nameInput.addEventListener('input', () => { ex.name = nameInput.value; });
+
+          const setsInput = document.createElement('input');
+          setsInput.type = 'number'; setsInput.placeholder = 'szett'; setsInput.value = ex.sets ?? '';
+          setsInput.addEventListener('input', () => { ex.sets = setsInput.value === '' ? null : Number(setsInput.value); });
+
+          const repsInput = document.createElement('input');
+          repsInput.type = 'number'; repsInput.placeholder = 'ism.'; repsInput.value = ex.reps ?? '';
+          repsInput.addEventListener('input', () => { ex.reps = repsInput.value === '' ? null : Number(repsInput.value); });
+
+          const weightInput = document.createElement('input');
+          weightInput.type = 'number'; weightInput.step = '0.5'; weightInput.placeholder = 'kg (ha van)'; weightInput.value = ex.weight ?? '';
+          weightInput.addEventListener('input', () => { ex.weight = weightInput.value === '' ? null : Number(weightInput.value); });
+
+          const rm = document.createElement('button');
+          rm.className = 'hd-btn ghost';
+          rm.textContent = '×';
+          rm.type = 'button';
+          rm.addEventListener('click', () => { state[day].splice(idx, 1); redraw(); });
+
+          row.appendChild(nameInput);
+          row.appendChild(setsInput);
+          row.appendChild(repsInput);
+          row.appendChild(weightInput);
+          row.appendChild(rm);
+          dayCard.appendChild(row);
+        });
+
+        const addBtn = document.createElement('button');
+        addBtn.className = 'hd-btn ghost';
+        addBtn.type = 'button';
+        addBtn.textContent = '+ gyakorlat';
+        addBtn.style.marginTop = '4px';
+        addBtn.addEventListener('click', () => { state[day].push({ name: '', sets: null, reps: null, weight: null }); redraw(); });
+        dayCard.appendChild(addBtn);
+
+        wrap.appendChild(dayCard);
+      });
+
+      const saveBtn = document.createElement('button');
+      saveBtn.className = 'hd-btn';
+      saveBtn.type = 'button';
+      saveBtn.textContent = 'Program mentése';
+      const statusEl = document.createElement('p');
+      statusEl.style.fontSize = '12px';
+      statusEl.style.opacity = '.6';
+      statusEl.style.margin = '6px 0 14px';
+      saveBtn.addEventListener('click', async () => {
+        saveBtn.disabled = true;
+        statusEl.textContent = 'Mentés…';
+        try {
+          await api('/api/workout-plan', { method: 'POST', body: JSON.stringify(state) });
+          location.reload();
+        } catch (err) {
+          statusEl.textContent = 'Nem sikerült menteni: ' + err.message;
+          saveBtn.disabled = false;
+        }
+      });
+      wrap.appendChild(saveBtn);
+      wrap.appendChild(statusEl);
+    }
+    redraw();
+  }
+
   // Shared by the exercises list and the digestive-symptoms log — both are
   // "newline-joined free-text items, one Notion rich_text field" lists.
   function renderTextList(listId, inputId, addBtnId, str, onSave) {
@@ -1149,7 +1367,7 @@ function showExportModal() {
 
   async function main() {
     try {
-      const [vitals, meals, activities, checklist, labor, coachNotes, surgeryPlan, vitalsRecent, checklistRecent, mealsRecent, suggestedTests] = await Promise.all([
+      const [vitals, meals, activities, checklist, labor, coachNotes, surgeryPlan, vitalsRecent, checklistRecent, mealsRecent, suggestedTests, workoutPlan, workoutToday, workoutRecent] = await Promise.all([
         api('/api/vitals/today'),
         api('/api/meals/today'),
         api('/api/activity/recent'),
@@ -1160,8 +1378,12 @@ function showExportModal() {
         api('/api/vitals/recent?limit=100'),
         api('/api/checklist/recent?days=30'),
         api('/api/meals/recent?days=30'),
-        api('/api/suggested-tests')
+        api('/api/suggested-tests'),
+        api('/api/workout-plan'),
+        api('/api/workout/today'),
+        api('/api/workout/recent?days=180')
       ]);
+      workoutRecentHistory = workoutRecent;
 
       vitalsHistory = vitalsRecent;
       surgeryPlanState = surgeryPlan;
@@ -1180,6 +1402,8 @@ function showExportModal() {
       renderSurgeryWarning(surgeryPlan, checklist);
       renderSuggestedTests(suggestedTests);
       renderWeeklyDigest(vitalsHistory, checklistRecent, mealsRecent);
+      renderWorkoutToday(workoutToday);
+      renderWorkoutPlanEditor(workoutPlan);
 
       renderChecklistRow(document.getElementById('hd-nw-list'), ['Nordic walking'], checklist, async (field, val) => {
         await api('/api/checklist/today', { method: 'POST', body: JSON.stringify({ [field]: val }) });

@@ -133,6 +133,13 @@
   .hd-manual-vitals-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
   .hd-manual-vitals-grid label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; opacity: .7; }
   .hd-manual-vitals-grid input { font-family: 'IBM Plex Mono', monospace; font-size: 14px; padding: 7px 9px; border-radius: 6px; border: 1px solid var(--line); background: var(--paper); color: var(--ink); }
+  .hd-workout-plan-row { display: flex; gap: 6px; margin-bottom: 6px; align-items: center; }
+  .hd-workout-plan-row input { font-family: 'IBM Plex Mono', monospace; font-size: 13px; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--paper); color: var(--ink); }
+  .hd-workout-plan-row input[type=text] { flex: 2; min-width: 0; }
+  .hd-workout-plan-row input[type=number] { flex: 1; min-width: 0; width: 0; }
+  .hd-workout-mini-input { width: 46px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; padding: 4px 5px; border-radius: 5px; border: 1px solid var(--line); background: var(--paper); color: var(--ink); margin-left: 4px; }
+  #hd-workout-today-list li { flex-wrap: wrap; }
+  #hd-workout-today-list li label { flex: 1 1 auto; min-width: 90px; }
 </style>
 </head>
 <body>
@@ -227,7 +234,19 @@
     <ul class="hd-checklist" id="hd-nw-list"></ul>
     <p style="font-size:12px; opacity:.6; margin-top:4px;" id="hd-nw-consistency"></p>
 
-    <p class="hd-section-title">Mai gyakorlatok</p>
+    <p class="hd-section-title">Mai edzés</p>
+    <ul class="hd-checklist" id="hd-workout-today-list"></ul>
+    <p style="font-size:12px; opacity:.55; margin-top:4px;" id="hd-workout-today-empty"></p>
+    <div id="hd-workout-chart" style="display:none;"></div>
+    <p style="font-size:12px; opacity:.55; margin-top:4px;">Koppints egy gyakorlat nevére a súly-trendhez.</p>
+
+    <button class="hd-coach-toggle" id="hd-workout-plan-toggle" style="padding:8px 0;">Heti program szerkesztése ▾</button>
+    <div id="hd-workout-plan-editor" style="display:none;"></div>
+
+    <button class="hd-btn hd-btn-secondary" id="hd-push-subscribe-btn" style="margin-top:12px;" type="button">🔔 Napi emlékeztető bekapcsolása</button>
+    <p style="font-size:11px; opacity:.55; margin-top:4px;" id="hd-push-status"></p>
+
+    <p class="hd-section-title">Egyéb mozgás / megjegyzés</p>
     <ul class="hd-checklist" id="hd-ex-list"></ul>
     <div class="hd-add-row">
       <input type="text" id="hd-ex-input" placeholder="pl. fekvőtámasz 3x10" />
@@ -377,7 +396,7 @@
 <!-- Bump ?v= on every deploy that touches app.js, so a stale cached index.html
      can never load a mismatched app.js (and vice versa) — this is what caused
      the "getElementById(...) is null" error after the sleep-section update. -->
-<script src="app.js?v=17"></script>
+<script src="app.js?v=18"></script>
 <script>
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => navigator.serviceWorker.register('sw.js'));

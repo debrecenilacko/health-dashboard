@@ -437,6 +437,245 @@ async function postVitalsLog(env, body) {
   return { ok: true, id: row.id };
 }
 
+// ---- Weekly workout program -------------------------------------------
+// The plan template (which exercises on which weekday) is just config, so
+// it lives in COACH_KV like surgery-plan/suggested-tests — full-replace on
+// save, no history needed. Actual completions go to their own Notion
+// database ("Edzésnapló") since exercises are free-text and vary per day,
+// one row per (date, exercise) so weight-over-time can be charted per
+// exercise later, same free-text-identity idea as Labor markers.
+
+const WORKOUT_PLAN_KV_KEY = 'workout-plan';
+const WORKOUT_DAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+const DEFAULT_WORKOUT_PLAN = { monday: [], tuesday: [], wednesday: [], thursday: [], friday: [], saturday: [], sunday: [] };
+
+function todayWorkoutDayKey() {
+  return WORKOUT_DAYS[new Date().getUTCDay()];
+}
+
+async function getWorkoutPlan(env) {
+  const plan = await env.COACH_KV.get(WORKOUT_PLAN_KV_KEY, 'json');
+  return plan || DEFAULT_WORKOUT_PLAN;
+}
+
+async function saveWorkoutPlan(env, body) {
+  const plan = {};
+  WORKOUT_DAYS.forEach((day) => {
+    const items = Array.isArray(body[day]) ? body[day] : [];
+    plan[day] = items
+      .filter((it) => it && typeof it.name === 'string' && it.name.trim())
+      .map((it) => ({
+        id: typeof it.id === 'string' && it.id ? it.id : crypto.randomUUID(),
+        name: it.name.trim(),
+        sets: typeof it.sets === 'number' ? it.sets : null,
+        reps: typeof it.reps === 'number' ? it.reps : null,
+        weight: typeof it.weight === 'number' ? it.weight : null
+      }));
+  });
+  await env.COACH_KV.put(WORKOUT_PLAN_KV_KEY, JSON.stringify(plan));
+  return plan;
+}
+
+async function findWorkoutLogToday(env, exerciseName) {
+  const d = todayISO();
+  const data = await notion(env, `/databases/${env.DB_EDZESNAPLO}/query`, {
+    method: 'POST',
+    body: JSON.stringify({
+      filter: { and: [{ property: 'Dátum', date: { equals: d } }, { property: 'Gyakorlat', rich_text: { equals: exerciseName } }] }
+    })
+  });
+  return data.results[0] || null;
+}
+
+async function postWorkoutLog(env, body) {
+  const exercise = typeof body.exercise === 'string' ? body.exercise.trim() : '';
+  if (!exercise) throw new Error('exercise required');
+  const properties = {
+    Name: { title: [{ text: { content: exercise } }] },
+    'Dátum': { date: { start: todayISO() } },
+    'Gyakorlat': { rich_text: [{ text: { content: exercise } }] }
+  };
+  if (typeof body.sets === 'number') properties['Sorozatok'] = { number: body.sets };
+  if (typeof body.reps === 'number') properties['Ismétlések'] = { number: body.reps };
+  if (typeof body.weight === 'number') properties['Súly (kg)'] = { number: body.weight };
+
+  const existing = await findWorkoutLogToday(env, exercise);
+  let row;
+  if (existing) {
+    row = await notion(env, `/pages/${existing.id}`, { method: 'PATCH', body: JSON.stringify({ properties }) });
+  } else {
+    row = await notion(env, '/pages', {
+      method: 'POST',
+      body: JSON.stringify({ parent: { database_id: env.DB_EDZESNAPLO }, properties })
+    });
+  }
+  return { ok: true, id: row.id };
+}
+
+async function postWorkoutUnlog(env, exercise) {
+  const existing = await findWorkoutLogToday(env, exercise);
+  if (existing) await notion(env, `/pages/${existing.id}`, { method: 'PATCH', body: JSON.stringify({ archived: true }) });
+  return { ok: true };
+}
+
+async function getWorkoutToday(env) {
+  const plan = await getWorkoutPlan(env);
+  const planned = plan[todayWorkoutDayKey()] || [];
+  const d = todayISO();
+  const data = await notion(env, `/databases/${env.DB_EDZESNAPLO}/query`, {
+    method: 'POST',
+    body: JSON.stringify({ filter: { property: 'Dátum', date: { equals: d } } })
+  });
+  const loggedByName = {};
+  data.results.forEach((row) => {
+    const p = row.properties;
+    loggedByName[text(p['Gyakorlat'])] = { sets: num(p['Sorozatok']), reps: num(p['Ismétlések']), weight: num(p['Súly (kg)']) };
+  });
+  return planned.map((ex) => {
+    const logged = loggedByName[ex.name];
+    return { ...ex, done: !!logged, loggedSets: logged ? logged.sets : null, loggedReps: logged ? logged.reps : null, loggedWeight: logged ? logged.weight : null };
+  });
+}
+
+async function getWorkoutRecent(env, days) {
+  const start = new Date();
+  start.setDate(start.getDate() - Math.min(days || 90, 365));
+  const data = await notion(env, `/databases/${env.DB_EDZESNAPLO}/query`, {
+    method: 'POST',
+    body: JSON.stringify({
+      filter: { property: 'Dátum', date: { on_or_after: start.toISOString().slice(0, 10) } },
+      sorts: [{ property: 'Dátum', direction: 'ascending' }],
+      page_size: 100
+    })
+  });
+  return data.results.map((row) => {
+    const p = row.properties;
+    return { date: date(p['Dátum']), exercise: text(p['Gyakorlat']), sets: num(p['Sorozatok']), reps: num(p['Ismétlések']), weight: num(p['Súly (kg)']) };
+  });
+}
+
+// ---- Web Push (RFC 8291 message encryption + RFC 8292 VAPID) --------------
+// Hand-rolled with only Web Crypto primitives (no npm `web-push` package —
+// this project deliberately has no bundler/build step). VAPID_PUBLIC_KEY is
+// public by design (sent to the browser too, in app.js) so it's a plain
+// constant, not a secret; VAPID_PRIVATE_KEY (a JWK JSON string) is a real
+// Cloudflare secret the user sets themselves via `wrangler secret put`.
+const VAPID_PUBLIC_KEY = 'BMz623-2szCzT-nWfTxBAvBHhvMwnEvgbZ4wQUJuy_w_oqXODo71lZ1U6hEjfz8kVOyWL6Ms0myLF-PlfoXX3FI';
+const PUSH_SUBSCRIPTION_KV_KEY = 'push-subscription';
+
+function b64urlToBytes(str) {
+  const padded = str.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((str.length + 3) % 4);
+  const bin = atob(padded);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+
+function bytesToB64url(bytes) {
+  let bin = '';
+  bytes.forEach((b) => { bin += String.fromCharCode(b); });
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function concatBytes(...arrays) {
+  const total = arrays.reduce((sum, a) => sum + a.length, 0);
+  const out = new Uint8Array(total);
+  let offset = 0;
+  arrays.forEach((a) => { out.set(a, offset); offset += a.length; });
+  return out;
+}
+
+// Combined HKDF-Extract + HKDF-Expand (RFC 5869) via the native Workers
+// 'HKDF' algorithm, returning exactly `length` bytes.
+async function hkdf(salt, ikm, info, length) {
+  const key = await crypto.subtle.importKey('raw', ikm, 'HKDF', false, ['deriveBits']);
+  const bits = await crypto.subtle.deriveBits({ name: 'HKDF', hash: 'SHA-256', salt, info }, key, length * 8);
+  return new Uint8Array(bits);
+}
+
+async function importVapidPrivateKey(env) {
+  const jwk = JSON.parse(env.VAPID_PRIVATE_KEY);
+  return crypto.subtle.importKey('jwk', jwk, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign']);
+}
+
+async function buildVapidAuthHeader(env, endpoint) {
+  const audience = new URL(endpoint).origin;
+  const header = { typ: 'JWT', alg: 'ES256' };
+  const payload = { aud: audience, exp: Math.floor(Date.now() / 1000) + 12 * 3600, sub: 'mailto:deblacko@gmail.com' };
+  const enc = (obj) => bytesToB64url(new TextEncoder().encode(JSON.stringify(obj)));
+  const unsigned = enc(header) + '.' + enc(payload);
+  const key = await importVapidPrivateKey(env);
+  const sig = await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, key, new TextEncoder().encode(unsigned));
+  const jwt = unsigned + '.' + bytesToB64url(new Uint8Array(sig));
+  return `vapid t=${jwt}, k=${VAPID_PUBLIC_KEY}`;
+}
+
+// RFC 8291 §3.4 — two-stage HKDF: first derive IKM from the ECDH shared
+// secret combined with the subscription's auth secret, then derive the
+// actual AES-128-GCM key/nonce from IKM combined with a fresh random salt.
+async function encryptWebPushPayload(subscription, payloadObj) {
+  const plaintext = new TextEncoder().encode(JSON.stringify(payloadObj));
+  const uaPublicBytes = b64urlToBytes(subscription.keys.p256dh);
+  const authSecret = b64urlToBytes(subscription.keys.auth);
+
+  const asKeyPair = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits']);
+  const asPublicRaw = new Uint8Array(await crypto.subtle.exportKey('raw', asKeyPair.publicKey));
+
+  const uaPublicKey = await crypto.subtle.importKey('raw', uaPublicBytes, { name: 'ECDH', namedCurve: 'P-256' }, false, []);
+  const ecdhSecret = new Uint8Array(await crypto.subtle.deriveBits({ name: 'ECDH', public: uaPublicKey }, asKeyPair.privateKey, 256));
+
+  const authInfo = concatBytes(new TextEncoder().encode('WebPush: info\0'), uaPublicBytes, asPublicRaw);
+  const ikm = await hkdf(authSecret, ecdhSecret, authInfo, 32);
+
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const cek = await hkdf(salt, ikm, new TextEncoder().encode('Content-Encoding: aes128gcm\0'), 16);
+  const nonce = await hkdf(salt, ikm, new TextEncoder().encode('Content-Encoding: nonce\0'), 12);
+
+  const cekKey = await crypto.subtle.importKey('raw', cek, 'AES-GCM', false, ['encrypt']);
+  const recordPlaintext = concatBytes(plaintext, new Uint8Array([2])); // record delimiter, no padding needed
+  const ciphertext = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv: nonce }, cekKey, recordPlaintext));
+
+  const recordSize = new Uint8Array(4);
+  new DataView(recordSize.buffer).setUint32(0, 4096, false);
+  const header = concatBytes(salt, recordSize, new Uint8Array([asPublicRaw.length]), asPublicRaw);
+  return concatBytes(header, ciphertext);
+}
+
+async function getPushSubscription(env) {
+  return env.COACH_KV.get(PUSH_SUBSCRIPTION_KV_KEY, 'json');
+}
+
+async function savePushSubscription(env, subscription) {
+  if (!subscription || !subscription.endpoint || !subscription.keys) throw new Error('invalid subscription');
+  await env.COACH_KV.put(PUSH_SUBSCRIPTION_KV_KEY, JSON.stringify(subscription));
+  return { ok: true };
+}
+
+async function sendPushNotification(env, title, body) {
+  const sub = await getPushSubscription(env);
+  if (!sub) return { ok: false, reason: 'no subscription' };
+  const encrypted = await encryptWebPushPayload(sub, { title, body });
+  const authHeader = await buildVapidAuthHeader(env, sub.endpoint);
+  const res = await fetch(sub.endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/octet-stream', 'Content-Encoding': 'aes128gcm', 'TTL': '86400', 'Authorization': authHeader },
+    body: encrypted
+  });
+  if (!res.ok) return { ok: false, reason: `push send ${res.status}: ${await res.text()}` };
+  return { ok: true };
+}
+
+// Reads today's plan + today's already-logged exercises, and if there's
+// anything planned and not fully done yet, sends a short push summary.
+async function sendDailyWorkoutReminder(env) {
+  const today = await getWorkoutToday(env);
+  if (!today.length) return;
+  const remaining = today.filter((ex) => !ex.done);
+  if (!remaining.length) return;
+  const summary = remaining.map((ex) => `${ex.name} (${ex.sets ?? '?'}×${ex.reps ?? '?'})`).join(', ');
+  await sendPushNotification(env, 'Mai edzés', summary);
+}
+
 // ---- Coach notes (Anthropic API) ------------------------------------------
 // A short, dated, wellness-coach-style read of the current vitals + bloodwork
 // trend (Attia/Huberman/Rhonda-Patrick framing, never a diagnosis). Only
@@ -692,6 +931,10 @@ export default {
   // generation didn't reliably fit into (confirmed both on the deployed
   // Worker and against /__scheduled in `wrangler dev --remote`).
   async scheduled(event, env, ctx) {
+    if (event.cron === '0 6 * * *') {
+      await sendDailyWorkoutReminder(env);
+      return;
+    }
     await checkAndRegenerateCoachNotes(env);
   },
 
@@ -771,6 +1014,31 @@ export default {
       if (url.pathname === '/api/suggested-tests' && request.method === 'POST') {
         const body = await request.json();
         return json(await saveSuggestedTests(env, body));
+      }
+      if (url.pathname === '/api/workout-plan' && request.method === 'GET') {
+        return json(await getWorkoutPlan(env));
+      }
+      if (url.pathname === '/api/workout-plan' && request.method === 'POST') {
+        const body = await request.json();
+        return json(await saveWorkoutPlan(env, body));
+      }
+      if (url.pathname === '/api/workout/today' && request.method === 'GET') {
+        return json(await getWorkoutToday(env));
+      }
+      if (url.pathname === '/api/workout/log' && request.method === 'POST') {
+        const body = await request.json();
+        return json(await postWorkoutLog(env, body));
+      }
+      if (url.pathname === '/api/workout/unlog' && request.method === 'POST') {
+        const body = await request.json();
+        return json(await postWorkoutUnlog(env, body.exercise));
+      }
+      if (url.pathname === '/api/workout/recent' && request.method === 'GET') {
+        return json(await getWorkoutRecent(env, Number(url.searchParams.get('days'))));
+      }
+      if (url.pathname === '/api/push-subscription' && request.method === 'POST') {
+        const body = await request.json();
+        return json(await savePushSubscription(env, body));
       }
       return json({ error: 'not found' }, 404);
     } catch (err) {

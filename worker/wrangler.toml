@@ -10,6 +10,7 @@ DB_AKTIVITAS = "1b187bd8d6e94e44979c7ce1e8bbc965"
 DB_ETKEZESEK = "92cc59f37816407fae6da0a49651889a"
 DB_CHECKLIST = "ce6cc97411f347adbfdbe2cd0a9ba080"
 DB_LABOR = "4702e64e3353476cb2a1c63ba70a1683"
+DB_EDZESNAPLO = "b3fe61fcf60a4ab6a45e5093a4bf824c"
 
 # A NOTION_TOKEN és APP_TOKEN NEM ide kerül — azokat titokként kell
 # beállítani (lásd README): wrangler secret put NOTION_TOKEN
@@ -22,6 +23,8 @@ id = "6687f63fbd674b75b72ed3154753b2ba"
 
 # Hetente egyszer (hétfő reggel) ellenőrzi, hogy változott-e a mérési/labor
 # adat, és ha igen, akkor (és csak akkor) hívja az Anthropic API-t új coach
-# jegyzetekért.
+# jegyzetekért. A napi "0 6 * * *" a mai edzésterv push emlékeztetőjét küldi
+# el (UTC idő — nyári/téli időszámítás között ~1 óra csúszhat a helyi időhöz
+# képest, ugyanaz a korlát, mint a heti coach-cronnál).
 [triggers]
-crons = ["0 6 * * 1"]
+crons = ["0 6 * * 1", "0 6 * * *"]
