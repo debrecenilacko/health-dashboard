@@ -1208,6 +1208,36 @@ function showExportModal() {
         await api('/api/checklist/today', { method: 'POST', body: JSON.stringify({ symptoms: str }) });
       });
 
+      document.getElementById('hd-meal-estimate').onclick = async () => {
+        const btn = document.getElementById('hd-meal-estimate');
+        const statusEl = document.getElementById('hd-meal-estimate-status');
+        const desc = document.getElementById('hd-meal-desc').value.trim();
+        if (!desc) {
+          statusEl.textContent = 'Előbb írd be, mit ettél.';
+          return;
+        }
+        const calRaw = document.getElementById('hd-meal-cal').value;
+        btn.disabled = true;
+        statusEl.textContent = 'Becslés folyamatban…';
+        try {
+          const est = await api('/api/meals/estimate', {
+            method: 'POST',
+            body: JSON.stringify({ desc, calories: calRaw === '' ? undefined : Number(calRaw) })
+          });
+          document.getElementById('hd-meal-cal').value = est.calories;
+          document.getElementById('hd-meal-protein').value = est.protein;
+          document.getElementById('hd-meal-carbs').value = est.carbs;
+          document.getElementById('hd-meal-fat').value = est.fat;
+          document.getElementById('hd-meal-fiber').value = est.fiber;
+          document.getElementById('hd-meal-sugar').value = est.sugar;
+          statusEl.textContent = 'Becsült érték — ellenőrizd, mielőtt mented.';
+        } catch (err) {
+          statusEl.textContent = 'Nem sikerült megbecsülni: ' + err.message;
+        } finally {
+          btn.disabled = false;
+        }
+      };
+
       document.getElementById('hd-meal-add').onclick = async () => {
         const type = document.getElementById('hd-meal-type').value;
         const desc = document.getElementById('hd-meal-desc').value.trim();
@@ -1223,6 +1253,7 @@ function showExportModal() {
           })
         });
         ['hd-meal-desc', 'hd-meal-cal', 'hd-meal-protein', 'hd-meal-carbs', 'hd-meal-fat', 'hd-meal-fiber', 'hd-meal-sugar'].forEach((id) => { document.getElementById(id).value = ''; });
+        document.getElementById('hd-meal-estimate-status').textContent = '';
         renderMeals(await api('/api/meals/today'));
       };
     } catch (err) {

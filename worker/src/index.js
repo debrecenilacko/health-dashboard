@@ -252,6 +252,32 @@ async function postMealLog(env, body) {
   return { ok: true, id: row.id };
 }
 
+// AI macro estimation for the in-app meal form: the user types what they ate
+// (and optionally the calorie count if they know it, e.g. from a package),
+// and this fills in the rest so they don't have to hunt down a nutrition
+// database themselves. Returns plain numbers, never written to Notion
+// directly — the frontend shows them in the normal editable form fields
+// first, same as a manually-typed value, so the user can correct anything
+// before saving.
+async function estimateMealMacros(env, desc, knownCalories) {
+  const systemPrompt = 'Egy táplálkozási becslő asszisztens vagy. A felhasználó megad egy étel/étkezés leírást magyarul, a te feladatod, hogy megbecsüld a tápérték adatait egy hozzávetőleges, étlap/tápérték-táblázat szintű pontossággal.'
+    + (knownCalories ? ' A kalóriaérték már ismert: ' + knownCalories + ' kcal — ezt vedd készpénznek, és a többi értéket ehhez illeszd arányosan.' : '')
+    + ' Válaszolj KIZÁRÓLAG egy JSON objektummal, semmi mással — ne írj magyarázatot, ne használj markdown code fence-t. A JSON kulcsai pontosan ezek legyenek: calories, protein, carbs, fat, fiber, sugar (mind szám, gramm — a calories kcal). Ha valamit nem lehet ésszerűen megbecsülni, írj oda 0-t, sose hagyd ki a kulcsot.';
+  const raw = await callAnthropic(env, systemPrompt, desc, 512);
+  let jsonStr = raw.trim();
+  const fenceMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fenceMatch) jsonStr = fenceMatch[1].trim();
+  const parsed = JSON.parse(jsonStr);
+  return {
+    calories: Number(parsed.calories) || 0,
+    protein: Number(parsed.protein) || 0,
+    carbs: Number(parsed.carbs) || 0,
+    fat: Number(parsed.fat) || 0,
+    fiber: Number(parsed.fiber) || 0,
+    sugar: Number(parsed.sugar) || 0
+  };
+}
+
 async function getActivityRecent(env) {
   const data = await notion(env, `/databases/${env.DB_AKTIVITAS}/query`, {
     method: 'POST',
@@ -688,6 +714,16 @@ export default {
       if (url.pathname === '/api/meals/log' && request.method === 'POST') {
         const body = await request.json();
         return json(await postMealLog(env, body));
+      }
+      if (url.pathname === '/api/meals/estimate' && request.method === 'POST') {
+        const body = await request.json();
+        if (!body.desc || typeof body.desc !== 'string') return json({ error: 'desc required' }, 400);
+        try {
+          const estimate = await estimateMealMacros(env, body.desc, typeof body.calories === 'number' ? body.calories : null);
+          return json(estimate);
+        } catch (err) {
+          return json({ error: 'Nem sikerült megbecsülni: ' + String(err) }, 500);
+        }
       }
       if (url.pathname === '/api/meals/recent' && request.method === 'GET') {
         const days = Number(url.searchParams.get('days')) || 30;

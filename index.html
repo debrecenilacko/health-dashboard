@@ -75,6 +75,8 @@
   .hd-protein-goal-label { font-size: 12px; opacity: .6; margin: 4px 0 0; }
   .hd-btn { background: var(--ink); color: var(--paper); border: none; border-radius: 6px; padding: 7px 14px; font-size: 13px; font-weight: 600; cursor: pointer; }
   .hd-btn.ghost { background: transparent; color: var(--alert); border: 1px solid var(--line); padding: 4px 8px; font-weight: 400; font-size: 12px; }
+  .hd-btn-secondary { background: transparent; color: var(--gold); border: 1px solid var(--gold); }
+  .hd-btn-secondary:disabled { opacity: .5; cursor: default; }
   .hd-section-title { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; opacity: .6; margin: 18px 0 8px; }
   .hd-section-title:first-child { margin-top: 0; }
   .hd-date { font-family: 'IBM Plex Mono', monospace; font-size: 11px; opacity: .55; margin-bottom: 14px; }
@@ -249,7 +251,11 @@
         <input type="text" id="hd-meal-desc" placeholder="Mit ettél?" />
       </div>
       <div class="hd-add-meal-row">
-        <input type="number" id="hd-meal-cal" placeholder="kcal" />
+        <input type="number" id="hd-meal-cal" placeholder="kcal (ha tudod)" />
+        <button class="hd-btn hd-btn-secondary" id="hd-meal-estimate" type="button" style="white-space:nowrap;">Becslés AI-val</button>
+      </div>
+      <p style="font-size:11px; opacity:.55; margin:2px 0 0;" id="hd-meal-estimate-status"></p>
+      <div class="hd-add-meal-row">
         <input type="number" id="hd-meal-protein" placeholder="Fehérje g" />
         <input type="number" id="hd-meal-carbs" placeholder="Szénhidrát g" />
         <input type="number" id="hd-meal-fat" placeholder="Zsír g" />
@@ -371,7 +377,7 @@
 <!-- Bump ?v= on every deploy that touches app.js, so a stale cached index.html
      can never load a mismatched app.js (and vice versa) — this is what caused
      the "getElementById(...) is null" error after the sleep-section update. -->
-<script src="app.js?v=16"></script>
+<script src="app.js?v=17"></script>
 <script>
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => navigator.serviceWorker.register('sw.js'));
