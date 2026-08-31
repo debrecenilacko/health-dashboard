@@ -211,6 +211,19 @@ function showSurgeryModal(plan) {
 // ISO 'YYYY-MM-DD' date keys) rather than assumed array order, since
 // checklistHistoryState comes back newest-first while the others are
 // oldest-first.
+const MED_LABELS = {
+  Rosuvastatin: 'morning', Vidonorm: 'morning', Nebilet: 'morning', Rawel: 'morning',
+  Merckformin: 'evening', Ozempic: 'weekly',
+  'Kreatin-glicin-taurin': 'supp', 'Just Whey': 'supp', 'Omega-3': 'supp', Multivitamin: 'supp',
+  'Kurkuma-kivonat': 'supp', NAC: 'supp', TUDCA: 'supp',
+  'Esti 3 órás étkezési határ': 'routine', 'Exercise snack': 'routine'
+};
+const DISPLAY_NAME = { Nebilet: 'Nebilet (½)', Ozempic: 'Ozempic injekció', 'Esti 3 órás étkezési határ': 'Esti 3 órás étkezési határ (nincs evés lefekvés előtt)' };
+// Bariatric-surgery-prep supplements that must stop 1-2 weeks before the
+// operation (per their own Notion property descriptions) — surfaced by the
+// surgery-plan warning banner, kept in sync with the Worker's identical list.
+const PRE_OP_STOP_SUPPLEMENTS = ['Kurkuma-kivonat', 'NAC', 'TUDCA'];
+
 function avgField(arr, field) {
   const vals = arr.filter((h) => h[field] != null).map((h) => h[field]);
   return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
@@ -234,13 +247,18 @@ function computeLoggingStreak(checklistHistoryState) {
   return streak;
 }
 
-function renderWeeklyDigest(vitalsHistory, checklistHistoryState, mealsHistoryState) {
+function renderWeeklyDigest(vitalsHistory, checklistHistoryState, mealsHistoryState, activities, periodDays) {
   const el = document.getElementById('hd-weekly-digest');
   if (!el) return;
+  periodDays = periodDays || 7;
+  const isMonth = periodDays >= 28;
+  const periodNoun = isMonth ? 'hónap' : 'hét';
+  const periodPhrase = isMonth ? 'hónaphoz' : 'héthez'; // for "az előző Xhoz/hez képest"
+
   const dayKey = (n) => { const x = new Date(); x.setDate(x.getDate() - n); return x.toISOString().slice(0, 10); };
-  const thisWeekStart = dayKey(7), todayK = dayKey(0), prevWeekStart = dayKey(14);
-  const thisWeek = (arr) => arr.filter((h) => h.date >= thisWeekStart && h.date <= todayK);
-  const prevWeek = (arr) => arr.filter((h) => h.date >= prevWeekStart && h.date < thisWeekStart);
+  const curStart = dayKey(periodDays), todayK = dayKey(0), prevStart = dayKey(periodDays * 2);
+  const cur = (arr) => (arr || []).filter((h) => h.date >= curStart && h.date <= todayK);
+  const prev = (arr) => (arr || []).filter((h) => h.date >= prevStart && h.date < curStart);
 
   const lines = [];
 
@@ -249,55 +267,119 @@ function renderWeeklyDigest(vitalsHistory, checklistHistoryState, mealsHistorySt
     lines.push('🔥 ' + streak + ' napja folyamatosan logolsz — szép munka.');
   }
 
-  const wNow = lastByDate(thisWeek(vitalsHistory), 'weight');
-  const wPrev = lastByDate(prevWeek(vitalsHistory), 'weight');
+  const wNow = lastByDate(cur(vitalsHistory), 'weight');
+  const wPrev = lastByDate(prev(vitalsHistory), 'weight');
   if (wNow != null && wPrev != null) {
     const delta = wNow - wPrev;
-    lines.push('Súly: ' + wNow.toFixed(1) + ' kg (' + (delta >= 0 ? '+' : '') + delta.toFixed(1) + ' kg az előző héthez képest)');
+    lines.push('Súly: ' + wNow.toFixed(1) + ' kg (' + (delta >= 0 ? '+' : '') + delta.toFixed(1) + ' kg az előző ' + periodPhrase + ' képest)');
   }
 
-  const stepsNow = avgField(thisWeek(vitalsHistory), 'steps');
-  const stepsPrev = avgField(prevWeek(vitalsHistory), 'steps');
+  const stepsNow = avgField(cur(vitalsHistory), 'steps');
+  const stepsPrev = avgField(prev(vitalsHistory), 'steps');
   if (stepsNow != null && stepsPrev != null) {
     const delta = Math.round(stepsNow - stepsPrev);
-    lines.push('Lépés: napi ' + Math.round(stepsNow) + ' (előző hét: ' + Math.round(stepsPrev) + ', ' + (delta >= 0 ? '+' : '') + delta + ')');
+    lines.push('Lépés: napi ' + Math.round(stepsNow) + ' (előző ' + periodNoun + ': ' + Math.round(stepsPrev) + ', ' + (delta >= 0 ? '+' : '') + delta + ')');
   }
 
-  const waterNow = avgField(thisWeek(checklistHistoryState), 'water');
-  const waterPrev = avgField(prevWeek(checklistHistoryState), 'water');
+  const waterNow = avgField(cur(checklistHistoryState), 'water');
+  const waterPrev = avgField(prev(checklistHistoryState), 'water');
   if (waterNow != null && waterPrev != null) {
-    lines.push('Víz: napi ' + waterNow.toFixed(1) + ' pohár (előző hét: ' + waterPrev.toFixed(1) + ')');
+    lines.push('Víz: napi ' + waterNow.toFixed(1) + ' pohár (előző ' + periodNoun + ': ' + waterPrev.toFixed(1) + ')');
   }
 
-  const proteinNow = avgField(thisWeek(mealsHistoryState), 'protein');
-  const proteinPrev = avgField(prevWeek(mealsHistoryState), 'protein');
+  const calNow = avgField(cur(mealsHistoryState), 'calories');
+  const calPrev = avgField(prev(mealsHistoryState), 'calories');
+  if (calNow != null && calPrev != null) {
+    lines.push('Kalória: napi ' + Math.round(calNow) + ' kcal (előző ' + periodNoun + ': ' + Math.round(calPrev) + ' kcal)');
+  }
+
+  const proteinNow = avgField(cur(mealsHistoryState), 'protein');
+  const proteinPrev = avgField(prev(mealsHistoryState), 'protein');
   if (proteinNow != null && proteinPrev != null) {
-    lines.push('Fehérje: napi ' + Math.round(proteinNow) + 'g (előző hét: ' + Math.round(proteinPrev) + 'g)');
+    lines.push('Fehérje: napi ' + Math.round(proteinNow) + 'g (előző ' + periodNoun + ': ' + Math.round(proteinPrev) + 'g)');
   }
 
-  const sleepNow = avgField(thisWeek(vitalsHistory), 'sleepHours');
-  const sleepPrev = avgField(prevWeek(vitalsHistory), 'sleepHours');
+  const sleepNow = avgField(cur(vitalsHistory), 'sleepHours');
+  const sleepPrev = avgField(prev(vitalsHistory), 'sleepHours');
   if (sleepNow != null && sleepPrev != null) {
-    lines.push('Alvás: napi ' + sleepNow.toFixed(1) + ' óra (előző hét: ' + sleepPrev.toFixed(1) + ' óra)');
+    lines.push('Alvás: napi ' + sleepNow.toFixed(1) + ' óra (előző ' + periodNoun + ': ' + sleepPrev.toFixed(1) + ' óra)');
+  }
+
+  const actCur = cur(activities);
+  const actPrev = prev(activities);
+  if (actCur.length || actPrev.length) {
+    const minutesNow = actCur.reduce((s, a) => s + (a.minutes || 0), 0);
+    const minutesPrev = actPrev.reduce((s, a) => s + (a.minutes || 0), 0);
+    const kmNow = Math.round(actCur.reduce((s, a) => s + (a.km || 0), 0) * 10) / 10;
+    const kmPrev = Math.round(actPrev.reduce((s, a) => s + (a.km || 0), 0) * 10) / 10;
+    lines.push('Mozgás: ' + minutesNow + ' perc, ' + kmNow + ' km (előző ' + periodNoun + ': ' + minutesPrev + ' perc, ' + kmPrev + ' km)');
+  }
+
+  // Overall checklist completion — the average share of tracked items
+  // (MED_LABELS: meds/supplements/routines) checked per day, not an
+  // all-or-nothing "every box ticked" figure. That distinction matters here:
+  // PRE_OP_STOP_SUPPLEMENTS are meant to go unchecked once stopped before
+  // surgery, so a strict all-true definition would wrongly tank the score.
+  const medFields = Object.keys(MED_LABELS);
+  const dayCompletion = (h) => medFields.filter((f) => !!h[f]).length / medFields.length;
+  const curChecklistDays = cur(checklistHistoryState);
+  const prevChecklistDays = prev(checklistHistoryState);
+  if (curChecklistDays.length) {
+    const pctNow = Math.round((curChecklistDays.reduce((s, h) => s + dayCompletion(h), 0) / curChecklistDays.length) * 100);
+    let line = 'Checklist teljesítés: ' + pctNow + '%';
+    if (prevChecklistDays.length) {
+      const pctPrev = Math.round((prevChecklistDays.reduce((s, h) => s + dayCompletion(h), 0) / prevChecklistDays.length) * 100);
+      line += ' (előző ' + periodNoun + ': ' + pctPrev + '%)';
+    }
+    lines.push(line);
   }
 
   el.innerHTML = '';
-  if (!lines.length) return;
   const wrap = document.createElement('div');
   wrap.className = 'hd-card';
   wrap.style.marginBottom = '14px';
+
+  const titleRow = document.createElement('div');
+  titleRow.style.display = 'flex';
+  titleRow.style.alignItems = 'center';
+  titleRow.style.justifyContent = 'space-between';
+  titleRow.style.gap = '8px';
   const title = document.createElement('p');
   title.className = 'hd-section-title';
   title.style.marginTop = '0';
-  title.textContent = 'Mi változott a héten';
-  wrap.appendChild(title);
-  lines.forEach((line) => {
-    const p = document.createElement('p');
-    p.style.margin = '4px 0';
-    p.style.fontSize = '13px';
-    p.textContent = line;
-    wrap.appendChild(p);
+  title.style.marginBottom = '0';
+  title.textContent = 'Mi változott ' + (isMonth ? 'a hónapban' : 'a héten');
+  titleRow.appendChild(title);
+
+  const toggle = document.createElement('div');
+  toggle.className = 'hd-digest-period-toggle';
+  [{ label: 'Hét', days: 7 }, { label: 'Hónap', days: 30 }].forEach(({ label, days }) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = label;
+    btn.className = 'hd-digest-period-btn' + (periodDays === days ? ' active' : '');
+    btn.addEventListener('click', () => renderWeeklyDigest(vitalsHistory, checklistHistoryState, mealsHistoryState, activities, days));
+    toggle.appendChild(btn);
   });
+  titleRow.appendChild(toggle);
+  wrap.appendChild(titleRow);
+
+  if (!lines.length) {
+    const p = document.createElement('p');
+    p.style.margin = '6px 0 0';
+    p.style.fontSize = '13px';
+    p.style.opacity = '.55';
+    p.textContent = 'Nincs elég adat ehhez az időszakhoz.';
+    wrap.appendChild(p);
+  } else {
+    lines.forEach((line) => {
+      const p = document.createElement('p');
+      p.style.margin = '4px 0';
+      p.style.fontSize = '13px';
+      p.textContent = line;
+      wrap.appendChild(p);
+    });
+  }
   el.appendChild(wrap);
 }
 
@@ -477,19 +559,6 @@ function showExportModal() {
     toggleTrendChart(chartWrap, nutriChartInstances, 'protein', [{ label: 'Fehérje', points }], [{ label: 'cél (80g)', value: 80, color: '#C9A227' }]);
   });
 
-  const MED_LABELS = {
-    Rosuvastatin: 'morning', Vidonorm: 'morning', Nebilet: 'morning', Rawel: 'morning',
-    Merckformin: 'evening', Ozempic: 'weekly',
-    'Kreatin-glicin-taurin': 'supp', 'Just Whey': 'supp', 'Omega-3': 'supp', Multivitamin: 'supp',
-    'Kurkuma-kivonat': 'supp', NAC: 'supp', TUDCA: 'supp',
-    'Esti 3 órás étkezési határ': 'routine', 'Exercise snack': 'routine'
-  };
-  const DISPLAY_NAME = { Nebilet: 'Nebilet (½)', Ozempic: 'Ozempic injekció', 'Esti 3 órás étkezési határ': 'Esti 3 órás étkezési határ (nincs evés lefekvés előtt)' };
-  // Bariatric-surgery-prep supplements that must stop 1-2 weeks before the
-  // operation (per their own Notion property descriptions) — surfaced by the
-  // surgery-plan warning banner, kept in sync with the Worker's identical list.
-  const PRE_OP_STOP_SUPPLEMENTS = ['Kurkuma-kivonat', 'NAC', 'TUDCA'];
-
   function renderChecklistRow(ulEl, fieldNames, checklistState, onToggle) {
     ulEl.innerHTML = '';
     fieldNames.forEach((field) => {
@@ -646,6 +715,7 @@ function showExportModal() {
   function renderVitals(vitals) {
     if (!vitals) return;
     document.getElementById('hd-vital-weight').textContent = vitals.weight ?? '—';
+    document.getElementById('hd-vital-bodyfat').textContent = vitals.bodyFat ?? '—';
     document.getElementById('hd-vital-waist').textContent = vitals.waist ?? '—';
     document.getElementById('hd-vital-bp').textContent = (vitals.sys ?? '—') + '/' + (vitals.dia ?? '—');
     document.getElementById('hd-vital-pulse').textContent = vitals.pulse ?? '—';
@@ -688,6 +758,7 @@ function showExportModal() {
   const waterChartInstances = {};
   const nutriChartInstances = {};
   let mealsHistoryState = [];
+  let activitiesState = [];
 
   function buildVitalsSeries(field) {
     if (field === 'bp') {
@@ -1384,14 +1455,14 @@ function showExportModal() {
       const [vitals, meals, activities, checklist, labor, coachNotes, surgeryPlan, vitalsRecent, checklistRecent, mealsRecent, suggestedTests, workoutPlan, workoutToday, workoutRecent] = await Promise.all([
         api('/api/vitals/today'),
         api('/api/meals/today'),
-        api('/api/activity/recent'),
+        api('/api/activity/recent?days=60'),
         api('/api/checklist/today'),
         api('/api/labor/recent?limit=100'),
         api('/api/coach-notes'),
         api('/api/surgery-plan'),
-        api('/api/vitals/recent?limit=100'),
-        api('/api/checklist/recent?days=30'),
-        api('/api/meals/recent?days=30'),
+        api('/api/vitals/recent?limit=200'),
+        api('/api/checklist/recent?days=60'),
+        api('/api/meals/recent?days=60'),
         api('/api/suggested-tests'),
         api('/api/workout-plan'),
         api('/api/workout/today'),
@@ -1406,6 +1477,7 @@ function showExportModal() {
       renderSleepDebt(vitalsHistory);
       renderMeals(meals);
       renderNutritionTrendStat(mealsRecent);
+      activitiesState = activities;
       renderActivityChart(activities);
       renderMovementRollup(activities);
       renderConsistency(checklistRecent);
@@ -1415,7 +1487,7 @@ function showExportModal() {
       renderAllCoachSections(coachNotes);
       renderSurgeryWarning(surgeryPlan, checklist);
       renderSuggestedTests(suggestedTests);
-      renderWeeklyDigest(vitalsHistory, checklistRecent, mealsRecent);
+      renderWeeklyDigest(vitalsHistory, checklistRecent, mealsRecent, activities, 7);
       renderWorkoutToday(workoutToday);
       renderWorkoutPlanEditor(workoutPlan);
 

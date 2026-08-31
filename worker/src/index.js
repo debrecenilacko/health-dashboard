@@ -69,6 +69,7 @@ const title = (p) => (p && p.title && p.title[0] ? p.title[0].plain_text : '');
 // per field instead, so a BP/waist entry doesn't get masked by a later weight-only sync.
 const VITALS_FIELD_READERS = {
   weight: (p) => num(p['Súly (kg)']),
+  bodyFat: (p) => num(p['Testzsír (%)']),
   waist: (p) => num(p['Derékbőség (cm)']),
   sys: (p) => num(p['Sys (Hgmm)']),
   dia: (p) => num(p['Dia (Hgmm)']),
@@ -117,7 +118,6 @@ async function getVitalsRecent(env, limit) {
       created: row.created_time,
       date: date(p['Dátum']),
       source: select(p['Forrás']),
-      bodyFat: num(p['Testzsír (%)']),
       bmi: num(p['BMI'])
     };
     Object.keys(VITALS_FIELD_READERS).forEach((key) => { out[key] = VITALS_FIELD_READERS[key](p); });
@@ -370,10 +370,16 @@ async function estimateMealMacros(env, desc, knownCalories) {
   };
 }
 
-async function getActivityRecent(env) {
+async function getActivityRecent(env, days) {
+  const start = new Date();
+  start.setDate(start.getDate() - Math.min(days || 20, 180));
   const data = await notion(env, `/databases/${env.DB_AKTIVITAS}/query`, {
     method: 'POST',
-    body: JSON.stringify({ sorts: [{ property: 'Dátum', direction: 'ascending' }], page_size: 20 })
+    body: JSON.stringify({
+      filter: { property: 'Dátum', date: { on_or_after: start.toISOString().slice(0, 10) } },
+      sorts: [{ property: 'Dátum', direction: 'ascending' }],
+      page_size: 100
+    })
   });
   return data.results.map((row) => {
     const p = row.properties;
@@ -1158,7 +1164,8 @@ export default {
         return json(await getMealsRecent(env, days));
       }
       if (url.pathname === '/api/activity/recent' && request.method === 'GET') {
-        return json(await getActivityRecent(env));
+        const days = Number(url.searchParams.get('days')) || 20;
+        return json(await getActivityRecent(env, days));
       }
       if (url.pathname === '/api/activity/strava-log' && request.method === 'POST') {
         const body = await request.json();

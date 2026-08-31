@@ -28,6 +28,9 @@
   .hd-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 18px; flex-wrap: wrap; }
   .hd-tab-btn { background: transparent; border: none; border-bottom: 2px solid transparent; padding: 8px 12px; font-size: 13px; font-family: 'IBM Plex Sans', sans-serif; color: var(--ink); opacity: 0.55; cursor: pointer; }
   .hd-tab-btn.active { border-bottom-color: var(--gold); opacity: 1; font-weight: 600; }
+  .hd-digest-period-toggle { display: flex; gap: 2px; background: var(--paper); border: 1px solid var(--line); border-radius: 8px; padding: 2px; flex-shrink: 0; }
+  .hd-digest-period-btn { background: transparent; border: none; border-radius: 6px; padding: 3px 9px; font-size: 11px; font-family: 'IBM Plex Sans', sans-serif; color: var(--ink); opacity: 0.55; cursor: pointer; }
+  .hd-digest-period-btn.active { background: var(--card); opacity: 1; font-weight: 600; }
   .hd-panel { display: none; }
   .hd-panel.active { display: block; }
   .hd-card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
@@ -174,6 +177,7 @@
     <div id="hd-coach-vitals"></div>
     <div class="hd-grid">
       <div class="hd-card hd-tap-card" data-vfield="weight"><p class="hd-stat-label">Súly</p><p class="hd-stat-value"><span id="hd-vital-weight">—</span> <span style="font-size:12px;opacity:.6">kg</span></p></div>
+      <div class="hd-card hd-tap-card" data-vfield="bodyFat"><p class="hd-stat-label">Testzsír</p><p class="hd-stat-value"><span id="hd-vital-bodyfat">—</span> <span style="font-size:12px;opacity:.6">%</span></p></div>
       <div class="hd-card hd-tap-card" data-vfield="waist"><p class="hd-stat-label">Derékbőség</p><p class="hd-stat-value"><span id="hd-vital-waist">—</span> <span style="font-size:12px;opacity:.6">cm</span></p></div>
       <div class="hd-card hd-tap-card" data-vfield="bp"><p class="hd-stat-label">Vérnyomás</p><p class="hd-stat-value"><span id="hd-vital-bp">—</span></p></div>
       <div class="hd-card hd-tap-card" data-vfield="pulse"><p class="hd-stat-label">Pulzus</p><p class="hd-stat-value"><span id="hd-vital-pulse">—</span> <span style="font-size:12px;opacity:.6">/perc</span></p></div>
