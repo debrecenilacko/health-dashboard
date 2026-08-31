@@ -31,6 +31,12 @@
   .hd-digest-period-toggle { display: flex; gap: 2px; background: var(--paper); border: 1px solid var(--line); border-radius: 8px; padding: 2px; flex-shrink: 0; }
   .hd-digest-period-btn { background: transparent; border: none; border-radius: 6px; padding: 3px 9px; font-size: 11px; font-family: 'IBM Plex Sans', sans-serif; color: var(--ink); opacity: 0.55; cursor: pointer; }
   .hd-digest-period-btn.active { background: var(--card); opacity: 1; font-weight: 600; }
+  .hd-fast-card { margin-bottom: 14px; }
+  .hd-fast-card.fasting { border-color: var(--gold); }
+  .hd-fast-label { margin: 0; font-size: 13px; font-weight: 600; opacity: .75; }
+  .hd-fast-time { margin: 4px 0 0; font-size: 15px; }
+  .hd-fast-bar { margin-top: 10px; height: 6px; border-radius: 3px; background: var(--paper); overflow: hidden; }
+  .hd-fast-bar-fill { height: 100%; background: var(--gold); border-radius: 3px; transition: width 1s linear; }
   .hd-panel { display: none; }
   .hd-panel.active { display: block; }
   .hd-card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
@@ -147,6 +153,7 @@
 </head>
 <body>
 <div id="hd-root" class="loading">
+  <div id="hd-fast-timer"></div>
   <div id="hd-surgery-warning"></div>
   <div class="hd-topbar">
     <div class="hd-date" id="hd-date"></div>

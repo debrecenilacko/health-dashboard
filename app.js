@@ -383,6 +383,80 @@ function renderWeeklyDigest(vitalsHistory, checklistHistoryState, mealsHistorySt
   el.appendChild(wrap);
 }
 
+// 40-hour weekly fast: Sunday 21:00 to Tuesday 13:00 (local time — this runs
+// on the user's own phone/browser, so no timezone conversion needed). Purely
+// a wall-clock calculation, no backend/Notion data involved, so it can
+// render instantly on load rather than waiting on the API calls in main().
+const FAST_START_DAY = 0; // Sunday (Date#getDay())
+const FAST_START_HOUR = 21;
+const FAST_DURATION_MS = 40 * 60 * 60 * 1000;
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+
+function computeFastState(now) {
+  now = now || new Date();
+  const cycleStart = new Date(now);
+  cycleStart.setDate(now.getDate() - now.getDay() + FAST_START_DAY);
+  cycleStart.setHours(FAST_START_HOUR, 0, 0, 0);
+  let start = cycleStart;
+  if (now < start) start = new Date(start.getTime() - WEEK_MS);
+  const end = new Date(start.getTime() + FAST_DURATION_MS);
+  if (now >= start && now < end) {
+    return { fasting: true, remainingMs: end - now, elapsedMs: now - start, totalMs: FAST_DURATION_MS };
+  }
+  const nextStart = new Date(start.getTime() + WEEK_MS);
+  return { fasting: false, remainingMs: nextStart - now };
+}
+
+function formatFastDuration(ms) {
+  const totalMinutes = Math.max(0, Math.round(ms / 60000));
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours <= 0) return minutes + ' perc';
+  return hours + ' óra ' + minutes + ' perc';
+}
+
+let fastTimerHandle = null;
+function renderFastTimer() {
+  const el = document.getElementById('hd-fast-timer');
+  if (!el) return;
+
+  function tick() {
+    const state = computeFastState();
+    el.innerHTML = '';
+    const wrap = document.createElement('div');
+    wrap.className = 'hd-card hd-fast-card' + (state.fasting ? ' fasting' : '');
+
+    const label = document.createElement('p');
+    label.className = 'hd-fast-label';
+    const time = document.createElement('p');
+    time.className = 'hd-fast-time';
+
+    if (state.fasting) {
+      label.textContent = '🌙 Böjt';
+      time.textContent = 'még ' + formatFastDuration(state.remainingMs) + ' van hátra';
+      wrap.appendChild(label);
+      wrap.appendChild(time);
+      const barOuter = document.createElement('div');
+      barOuter.className = 'hd-fast-bar';
+      const barInner = document.createElement('div');
+      barInner.className = 'hd-fast-bar-fill';
+      barInner.style.width = Math.min(100, Math.round((state.elapsedMs / state.totalMs) * 100)) + '%';
+      barOuter.appendChild(barInner);
+      wrap.appendChild(barOuter);
+    } else {
+      label.textContent = '🍽️ Étkezési ablak';
+      time.textContent = 'a böjt még ' + formatFastDuration(state.remainingMs) + ' múlva kezdődik (vasárnap 21:00)';
+      wrap.appendChild(label);
+      wrap.appendChild(time);
+    }
+    el.appendChild(wrap);
+  }
+
+  tick();
+  if (fastTimerHandle) clearInterval(fastTimerHandle);
+  fastTimerHandle = setInterval(tick, 30000);
+}
+
 function downloadBlob(filename, mime, content) {
   const blob = new Blob([content], { type: mime });
   const url = URL.createObjectURL(blob);
@@ -1451,6 +1525,7 @@ function showExportModal() {
   }
 
   async function main() {
+    renderFastTimer();
     try {
       const [vitals, meals, activities, checklist, labor, coachNotes, surgeryPlan, vitalsRecent, checklistRecent, mealsRecent, suggestedTests, workoutPlan, workoutToday, workoutRecent] = await Promise.all([
         api('/api/vitals/today'),
