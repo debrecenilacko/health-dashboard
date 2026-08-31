@@ -127,6 +127,20 @@ async function ensureConfig() {
   return pendingConfigPromise;
 }
 
+// The checklist Worker endpoint finds-or-creates today's Notion page per
+// call; two POSTs in flight at once can both miss the not-yet-created page
+// and each create their own, leaving a duplicate row for the day. Every
+// checkbox/water/text-field toggle fires its own independent request, so
+// two rapid taps race easily. Chaining every checklist write through one
+// promise queue serializes them — only one is ever in flight.
+let checklistWriteQueue = Promise.resolve();
+function postChecklistPatch(patch) {
+  checklistWriteQueue = checklistWriteQueue.catch(() => {}).then(
+    () => api('/api/checklist/today', { method: 'POST', body: JSON.stringify(patch) })
+  );
+  return checklistWriteQueue;
+}
+
 async function api(path, options = {}) {
   const cfg = await ensureConfig();
   const res = await fetch(cfg.apiBase + path, {
@@ -1406,13 +1420,13 @@ function showExportModal() {
       renderWorkoutPlanEditor(workoutPlan);
 
       renderChecklistRow(document.getElementById('hd-nw-list'), ['Nordic walking'], checklist, async (field, val) => {
-        await api('/api/checklist/today', { method: 'POST', body: JSON.stringify({ [field]: val }) });
+        await postChecklistPatch({ [field]: val });
       });
 
       const medGroups = { morning: [], evening: [], weekly: [], supp: [], routine: [] };
       Object.entries(MED_LABELS).forEach(([field, group]) => medGroups[group].push(field));
       const toggleMed = async (field, val) => {
-        await api('/api/checklist/today', { method: 'POST', body: JSON.stringify({ [field]: val }) });
+        await postChecklistPatch({ [field]: val });
       };
       renderChecklistRow(document.getElementById('hd-med-morning'), medGroups.morning, checklist, toggleMed);
       renderChecklistRow(document.getElementById('hd-med-evening'), medGroups.evening, checklist, toggleMed);
@@ -1421,15 +1435,15 @@ function showExportModal() {
       renderChecklistRow(document.getElementById('hd-med-routine'), medGroups.routine, checklist, toggleMed);
 
       renderWater(checklist.water, async (n) => {
-        await api('/api/checklist/today', { method: 'POST', body: JSON.stringify({ water: n }) });
+        await postChecklistPatch({ water: n });
       });
 
       renderTextList('hd-ex-list', 'hd-ex-input', 'hd-ex-add', checklist.exercises, async (str) => {
-        await api('/api/checklist/today', { method: 'POST', body: JSON.stringify({ exercises: str }) });
+        await postChecklistPatch({ exercises: str });
       });
 
       renderTextList('hd-symptom-list', 'hd-symptom-input', 'hd-symptom-add', checklist.symptoms, async (str) => {
-        await api('/api/checklist/today', { method: 'POST', body: JSON.stringify({ symptoms: str }) });
+        await postChecklistPatch({ symptoms: str });
       });
 
       document.getElementById('hd-meal-estimate').onclick = async () => {

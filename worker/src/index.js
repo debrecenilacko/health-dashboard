@@ -451,6 +451,39 @@ async function getChecklistRecent(env, days) {
   return data.results.map(checklistPageToJson);
 }
 
+// Merges any duplicate same-day checklist pages back into one: keeps the
+// earliest-created page, OR-merges checkboxes, takes the max water count,
+// and joins any distinct free-text fields — then archives the rest. Called
+// after every create, so whichever racing request finishes last is the one
+// that sees and cleans up all of them.
+async function dedupeChecklistToday(env) {
+  const d = todayISO();
+  const data = await notion(env, `/databases/${env.DB_CHECKLIST}/query`, {
+    method: 'POST',
+    body: JSON.stringify({
+      filter: { property: 'Dátum', date: { equals: d } },
+      sorts: [{ timestamp: 'created_time', direction: 'ascending' }]
+    })
+  });
+  if (data.results.length <= 1) return data.results[0];
+
+  const [keep, ...extras] = data.results;
+  const merged = {};
+  CHECKLIST_CHECKBOX_FIELDS.forEach((f) => {
+    if (data.results.some((r) => checkbox(r.properties[f]))) merged[f] = { checkbox: true };
+  });
+  const maxWater = Math.max(...data.results.map((r) => num(r.properties['Víz (pohár, 250ml)']) || 0));
+  if (maxWater) merged['Víz (pohár, 250ml)'] = { number: maxWater };
+  const exercisesText = [...new Set(data.results.map((r) => text(r.properties['Gyakorlatok'])).filter(Boolean))].join(' / ');
+  if (exercisesText) merged['Gyakorlatok'] = { rich_text: [{ text: { content: exercisesText } }] };
+  const symptomsText = [...new Set(data.results.map((r) => text(r.properties['Emésztési tünetek'])).filter(Boolean))].join(' / ');
+  if (symptomsText) merged['Emésztési tünetek'] = { rich_text: [{ text: { content: symptomsText } }] };
+
+  const patched = await notion(env, `/pages/${keep.id}`, { method: 'PATCH', body: JSON.stringify({ properties: merged }) });
+  await Promise.all(extras.map((r) => notion(env, `/pages/${r.id}`, { method: 'PATCH', body: JSON.stringify({ archived: true }) })));
+  return patched;
+}
+
 async function postChecklistToday(env, body) {
   let row = await findChecklistPageToday(env);
   const properties = {};
@@ -474,6 +507,12 @@ async function postChecklistToday(env, body) {
         }
       })
     });
+    // findChecklistPageToday + create-if-missing isn't atomic: two requests
+    // that both miss an as-yet-uncreated page each create their own,
+    // leaving a duplicate row for the day (this actually happened on
+    // 2026-08-27). Self-heal after every create by checking for same-day
+    // siblings and merging them back into one.
+    row = await dedupeChecklistToday(env);
   } else {
     row = await notion(env, `/pages/${row.id}`, {
       method: 'PATCH',
