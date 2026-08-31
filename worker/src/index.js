@@ -252,6 +252,76 @@ async function postMealLog(env, body) {
   return { ok: true, id: row.id };
 }
 
+// ---- Nutrition MCP meal -> Notion sync -------------------------------------
+// The Nutrition MCP (a separate, self-hosted Supabase-backed service the
+// user logs meals into via chat) is not the same system as this dashboard's
+// Notion-backed Étkezések table. A Postgres trigger on its `meals` table
+// calls this endpoint on every insert/update so those meals show up here
+// too, without the two systems needing to be manually kept in sync.
+const MEAL_TYPE_HU = { breakfast: 'Reggeli', lunch: 'Ebéd', dinner: 'Vacsora', snack: 'Snack' };
+
+async function handleSyncMeal(request, env) {
+  const secret = request.headers.get('X-Sync-Secret');
+  if (secret !== env.SYNC_SECRET) return unauthorized();
+  let payload;
+  try {
+    payload = await request.json();
+  } catch {
+    return json({ error: 'invalid json' }, 400);
+  }
+  const rec = payload.record;
+  if (!rec) return json({ error: 'no record' }, 400);
+  try {
+    await syncMealRecordToNotion(env, rec);
+    return json({ ok: true });
+  } catch (err) {
+    return json({ error: String(err) }, 500);
+  }
+}
+
+async function syncMealRecordToNotion(env, rec) {
+  const type = MEAL_TYPE_HU[rec.meal_type] || 'Snack';
+  const desc = rec.description || '';
+  const d = (rec.logged_at ? String(rec.logged_at) : new Date().toISOString()).slice(0, 10);
+  const properties = {
+    Name: { title: [{ text: { content: `${d} ${type}` } }] },
+    'Dátum': { date: { start: d } },
+    'Típus': { select: { name: type } },
+    'Leírás': { rich_text: [{ text: { content: desc } }] }
+  };
+  if (typeof rec.calories === 'number') properties['Kalória'] = { number: rec.calories };
+  if (rec.protein_g != null) properties['Fehérje (g)'] = { number: Number(rec.protein_g) };
+  if (rec.carbs_g != null) properties['Szénhidrát (g)'] = { number: Number(rec.carbs_g) };
+  if (rec.fat_g != null) properties['Zsír (g)'] = { number: Number(rec.fat_g) };
+  if (rec.fiber_g != null) properties['Rost (g)'] = { number: Number(rec.fiber_g) };
+  if (rec.sugar_g != null) properties['Cukor (g)'] = { number: Number(rec.sugar_g) };
+
+  if (rec.notion_page_id) {
+    await notion(env, `/pages/${rec.notion_page_id}`, { method: 'PATCH', body: JSON.stringify({ properties }) });
+    return;
+  }
+
+  const row = await notion(env, '/pages', {
+    method: 'POST',
+    body: JSON.stringify({ parent: { database_id: env.DB_ETKEZESEK }, properties })
+  });
+
+  // Write the Notion page id back onto the Supabase row so a future edit
+  // (e.g. a portion-size correction) updates this same Notion page instead
+  // of creating a new one. This is itself an UPDATE on `meals`, but the
+  // trigger's WHEN condition excludes it, so it does not re-trigger the sync.
+  await fetch(`${env.SUPABASE_URL}/rest/v1/meals?id=eq.${rec.id}`, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      apikey: env.SUPABASE_SECRET_KEY,
+      Authorization: `Bearer ${env.SUPABASE_SECRET_KEY}`,
+      Prefer: 'return=minimal'
+    },
+    body: JSON.stringify({ notion_page_id: row.id })
+  });
+}
+
 // AI macro estimation for the in-app meal form: the user types what they ate
 // (and optionally the calorie count if they know it, e.g. from a package),
 // and this fills in the rest so they don't have to hunt down a nutrition
@@ -940,9 +1010,18 @@ export default {
 
   async fetch(request, env, ctx) {
     if (request.method === 'OPTIONS') return new Response(null, { headers: corsHeaders() });
-    if (!checkAuth(request, env)) return unauthorized();
 
     const url = new URL(request.url);
+
+    // Supabase trigger on the Nutrition MCP's `meals` table calls this on
+    // every insert/update — authenticated with its own SYNC_SECRET, not
+    // APP_TOKEN, so it must be handled before the checkAuth gate below.
+    if (url.pathname === '/sync/meal' && request.method === 'POST') {
+      return handleSyncMeal(request, env);
+    }
+
+    if (!checkAuth(request, env)) return unauthorized();
+
     try {
       if (url.pathname === '/api/vitals/today' && request.method === 'GET') {
         return json(await getVitalsToday(env));
