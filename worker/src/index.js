@@ -279,6 +279,28 @@ async function handleSyncMeal(request, env) {
   }
 }
 
+// Called by an AFTER DELETE trigger on the Nutrition MCP's `meals` table, so
+// a meal deleted there doesn't leave an orphaned row in Notion. Archives
+// rather than hard-deletes, matching how Notion's own UI trash works.
+async function handleSyncMealDelete(request, env) {
+  const secret = request.headers.get('X-Sync-Secret');
+  if (secret !== env.SYNC_SECRET) return unauthorized();
+  let payload;
+  try {
+    payload = await request.json();
+  } catch {
+    return json({ error: 'invalid json' }, 400);
+  }
+  const pageId = payload.notion_page_id;
+  if (!pageId) return json({ error: 'no notion_page_id' }, 400);
+  try {
+    await notion(env, `/pages/${pageId}`, { method: 'PATCH', body: JSON.stringify({ archived: true }) });
+    return json({ ok: true });
+  } catch (err) {
+    return json({ error: String(err) }, 500);
+  }
+}
+
 async function syncMealRecordToNotion(env, rec) {
   const type = MEAL_TYPE_HU[rec.meal_type] || 'Snack';
   const desc = rec.description || '';
@@ -470,7 +492,45 @@ async function findVitalsPageToday(env) {
   return data.results[0] || null;
 }
 
+// The Nutrition MCP (a separate, self-hosted Supabase-backed service the user
+// logs meals into via chat) also tracks weight, in its own weight_log table.
+// Every vitals/log write that includes a weight — manual or the Renpho auto
+// sync — mirrors it there too, so weight logged here is visible from chat/MCP
+// as well, not just this dashboard. One row per day, upserted on
+// (user_id, idempotency_key), mirroring the same-day merge done for the
+// Notion write below. Best-effort: never blocks or breaks the Notion write.
+async function writeWeightToSupabase(env, weightKg, d) {
+  if (!env.SUPABASE_URL || !env.SUPABASE_SECRET_KEY || !env.NUTRITION_USER_ID) {
+    console.warn('Supabase env vars missing, skipping nutrition-mcp weight sync');
+    return;
+  }
+  try {
+    const res = await fetch(`${env.SUPABASE_URL}/rest/v1/weight_log?on_conflict=user_id,idempotency_key`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: env.SUPABASE_SECRET_KEY,
+        Authorization: `Bearer ${env.SUPABASE_SECRET_KEY}`,
+        Prefer: 'resolution=merge-duplicates'
+      },
+      body: JSON.stringify({
+        user_id: env.NUTRITION_USER_ID,
+        weight_g: Math.round(weightKg * 1000),
+        logged_at: new Date().toISOString(),
+        notes: 'Health dashboard sync',
+        idempotency_key: `dashboard-${d}`
+      })
+    });
+    if (!res.ok) {
+      console.error('Supabase weight_log upsert failed:', res.status, await res.text());
+    }
+  } catch (err) {
+    console.error('Supabase weight_log upsert error:', err);
+  }
+}
+
 async function postVitalsLog(env, body) {
+  const d = todayISO();
   const properties = {};
   if (typeof body.weight === 'number') properties['Súly (kg)'] = { number: body.weight };
   if (typeof body.bodyFat === 'number') properties['Testzsír (%)'] = { number: body.bodyFat };
@@ -490,7 +550,6 @@ async function postVitalsLog(env, body) {
       body: JSON.stringify({ properties })
     });
   } else {
-    const d = todayISO();
     row = await notion(env, '/pages', {
       method: 'POST',
       body: JSON.stringify({
@@ -504,6 +563,11 @@ async function postVitalsLog(env, body) {
       })
     });
   }
+
+  if (typeof body.weight === 'number') {
+    await writeWeightToSupabase(env, body.weight, d);
+  }
+
   return { ok: true, id: row.id };
 }
 
@@ -1018,6 +1082,9 @@ export default {
     // APP_TOKEN, so it must be handled before the checkAuth gate below.
     if (url.pathname === '/sync/meal' && request.method === 'POST') {
       return handleSyncMeal(request, env);
+    }
+    if (url.pathname === '/sync/meal/delete' && request.method === 'POST') {
+      return handleSyncMealDelete(request, env);
     }
 
     if (!checkAuth(request, env)) return unauthorized();
